@@ -3,7 +3,7 @@ import pandas as pd
 import os
 
 st.set_page_config(page_title="የቁጠባ እና ብድር ሲስተም", layout="wide")
-st.title("🏦 የገንዘብ ብድር እና ቁጠባ ማህበር ዘመናዊ ሲስተም")
+st.title("🏦 ተስፋ የገንዘብ ቁጠባና ብድር ማህበር")
 
 # 💾 በቋሚነት ኮምፒውተር ላይ መረጃ መያዣ የኤክሴል ፋይል
 DB_FILE = "sacco_database.xlsx"

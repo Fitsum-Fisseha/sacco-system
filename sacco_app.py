@@ -71,7 +71,8 @@ menu = st.sidebar.selectbox(
         "💵 የብድር አገልግሎት",
         "📅 የብድር ክፍያ መመዝገቢያ",
         "📊 ጠቅላላ ሪፖርት",
-        "✏️ የአባላት መረጃ ማስተካከያ"
+        "✏️ የአባላት መረጃ ማስተካከያ",
+        "📤 Excel ፋይል አስገባ"
     ]
 )
 
@@ -760,4 +761,149 @@ elif menu == "✏️ የአባላት መረጃ ማስተካከያ":
     else:
 
         st.info("📌 እስካሁን የተመዘገበ አባል የለም።")
+# ============================================================
+# 7. 📤 IMPORT EXCEL FILE
+# ============================================================
 
+elif menu == "📤 Excel ፋይል አስገባ":
+
+    st.header("📤 ከኮምፒውተር የExcel ፋይል አስገባ")
+
+    st.info(
+        "📌 እዚህ ከኮምፒውተርዎ የExcel (.xlsx) ፋይል "
+        "መምረጥ ይችላሉ።"
+    )
+
+    uploaded_file = st.file_uploader(
+        "Excel ፋይል ይምረጡ",
+        type=["xlsx"]
+    )
+
+    if uploaded_file is not None:
+
+        try:
+
+            imported_df = pd.read_excel(
+                uploaded_file,
+                dtype={"መታወቂያ ቁጥር (ID)": str}
+            )
+
+            st.success(
+                f"✅ ፋይሉ በትክክል ተነቧል። "
+                f"{len(imported_df)} መረጃዎች ተገኝተዋል።"
+            )
+
+            st.subheader("📋 የሚገባው መረጃ")
+
+            st.dataframe(
+                imported_df,
+                use_container_width=True
+            )
+
+            import_button = st.button(
+                "📥 ወደ ሲስተሙ አስገባ",
+                use_container_width=True
+            )
+
+            if import_button:
+
+                if "መታወቂያ ቁጥር (ID)" not in imported_df.columns:
+
+                    st.error(
+                        "❌ ይህ Excel ፋይል "
+                        "'መታወቂያ ቁጥር (ID)' የሚል column የለውም።"
+                    )
+
+                elif "የአባል ስም" not in imported_df.columns:
+
+                    st.error(
+                        "❌ ይህ Excel ፋይል "
+                        "'የአባል ስም' የሚል column የለውም።"
+                    )
+
+                else:
+
+                    imported_df = imported_df.dropna(
+                        subset=["መታወቂያ ቁጥር (ID)"]
+                    )
+
+                    imported_df["መታወቂያ ቁጥር (ID)"] = (
+                        imported_df["መታወቂያ ቁጥር (ID)"]
+                        .astype(str)
+                        .str.strip()
+                    )
+
+                    new_count = 0
+                    updated_count = 0
+
+                    for _, row in imported_df.iterrows():
+
+                        member_id = str(
+                            row["መታወቂያ ቁጥር (ID)"]
+                        ).strip()
+
+                        member_name = str(
+                            row["የአባል ስም"]
+                        ).strip()
+
+                        if not member_id or member_id == "nan":
+                            continue
+
+                        if member_id in members_db:
+
+                            # Existing member → update information
+                            for column in imported_df.columns:
+
+                                if column != "መታወቂያ ቁጥር (ID)":
+
+                                    value = row[column]
+
+                                    if pd.notna(value):
+                                        members_db[member_id][column] = value
+
+                            updated_count += 1
+
+                        else:
+
+                            # New member
+                            members_db[member_id] = {
+                                "የአባል ስም": member_name,
+                                "ጠቅላላ ቁጠባ (ብር)": 0.0,
+                                "ብድር ሁኔታ": "የለበትም",
+                                "የተበደረው ጠቅላላ (ብር)": 0.0,
+                                "በእጅ የተሰጠ 90% (ብር)": 0.0,
+                                "የቀረው ዕዳ (ብር)": 0.0
+                            }
+
+                            # Import additional columns if available
+                            for column in imported_df.columns:
+
+                                if column != "መታወቂያ ቁጥር (ID)":
+
+                                    value = row[column]
+
+                                    if pd.notna(value):
+                                        members_db[member_id][column] = value
+
+                            new_count += 1
+
+                    save_data_to_excel(members_db)
+
+                    st.success(
+                        f"✅ የExcel ፋይሉ ወደ ሲስተሙ ተገብቷል!"
+                    )
+
+                    st.info(
+                        f"👤 አዲስ የገቡ አባላት፦ {new_count}\n\n"
+                        f"🔄 የተሻሻሉ አባላት፦ {updated_count}\n\n"
+                        f"📊 ጠቅላላ አባላት፦ {len(members_db)}"
+                    )
+
+                    st.rerun()
+
+        except Exception as e:
+
+            st.error(
+                f"❌ ፋይሉን ማንበብ አልተቻለም።\n\n"
+                f"ምክንያት፦ {e}"
+            )

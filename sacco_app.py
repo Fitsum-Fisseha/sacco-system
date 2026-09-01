@@ -387,145 +387,169 @@ elif menu == "📊 ጠቅላላ ሪፖርት":
         # MEMBER MANAGEMENT
         # ----------------------------------------------------
 
-        st.subheader("👤 የአባል መረጃ ማስተካከያ")
+# --- የአባላት ማስተካከያ እና ማጥፊያ ---
+st.divider()
+st.header("👤 የአባላት መረጃ ማስተካከያ")
 
-        member_ids = list(members_db.keys())
+if members_db:
 
-        selected_id = st.selectbox(
-            "የሚያስተካክሉትን ወይም የሚሰርዙትን አባል ይምረጡ፦",
-            member_ids,
-            format_func=lambda x:
-                f"{x} - {members_db[x]['የአባል ስም']}"
+    for member_id, member in list(members_db.items()):
+
+        # የአባሉ መረጃ
+        col1, col2, col3, col4, col5, col6 = st.columns(
+            [1, 2.5, 1.5, 1.5, 1.2, 1.2]
         )
-
-        selected_member = members_db[selected_id]
-
-        st.info(
-            f"🆔 ID: **{selected_id}**    |    "
-            f"👤 ስም: **{selected_member['የአባል ስም']}**    |    "
-            f"💰 ቁጠባ: **{selected_member['ጠቅላላ ቁጠባ (ብር)']:,.2f} ብር**"
-        )
-
-        col1, col2 = st.columns(2)
-
-        # ====================================================
-        # ✏️ EDIT
-        # ====================================================
 
         with col1:
-
-            edit_btn = st.button(
-                "✏️ የአባል ስም አርትዕ",
-                use_container_width=True
-            )
-
-        # ====================================================
-        # 🗑️ DELETE
-        # ====================================================
+            st.write(f"**{member_id}**")
 
         with col2:
+            st.write(f"**{member['የአባል ስም']}**")
 
-            delete_btn = st.button(
-                "🗑️ አባል ሰርዝ",
-                use_container_width=True
+        with col3:
+            st.write(
+                f"{member['ጠቅላላ ቁጠባ (ብር)']:,.2f} ብር"
             )
 
+        with col4:
+            st.write(member["ብድር ሁኔታ"])
 
-        # ====================================================
-        # EDIT FORM
-        # ====================================================
-
-        if edit_btn:
-
-            st.subheader(
-                f"✏️ {selected_id} - የአባል መረጃ ማስተካከያ"
+        with col5:
+            edit_clicked = st.button(
+                "✏️ አስተካክል",
+                key=f"edit_{member_id}"
             )
 
-            new_name = st.text_input(
-                "አዲስ የአባል ሙሉ ስም፦",
-                value=selected_member["የአባል ስም"],
-                key=f"edit_name_{selected_id}"
+        with col6:
+            delete_clicked = st.button(
+                "🗑️ አጥፋ",
+                key=f"delete_{member_id}"
             )
 
-            save_edit_btn = st.button(
-                "💾 ለውጡን አስቀምጥ"
-            )
+        # =========================
+        # EDIT
+        # =========================
+        if edit_clicked:
 
-            if save_edit_btn:
+            st.session_state[f"editing_{member_id}"] = True
 
-                if new_name.strip():
+        if st.session_state.get(f"editing_{member_id}", False):
 
-                    members_db[selected_id]["የአባል ስም"] = (
-                        new_name.strip()
+            with st.container(border=True):
+
+                st.subheader(
+                    f"✏️ {member['የአባል ስም']} - መረጃ ማስተካከያ"
+                )
+
+                edit_name = st.text_input(
+                    "የአባል ሙሉ ስም",
+                    value=member["የአባል ስም"],
+                    key=f"name_edit_{member_id}"
+                )
+
+                save_col, cancel_col = st.columns(2)
+
+                with save_col:
+                    save_edit = st.button(
+                        "💾 ለውጡን አስቀምጥ",
+                        key=f"save_edit_{member_id}",
+                        use_container_width=True
                     )
+
+                with cancel_col:
+                    cancel_edit = st.button(
+                        "❌ ሰርዝ",
+                        key=f"cancel_edit_{member_id}",
+                        use_container_width=True
+                    )
+
+                if save_edit:
+
+                    if edit_name.strip():
+
+                        members_db[member_id]["የአባል ስም"] = edit_name.strip()
+
+                        save_data_to_excel(members_db)
+
+                        st.session_state[f"editing_{member_id}"] = False
+
+                        st.success(
+                            f"✅ {member_id} የአባሉ ስም በትክክል ተስተካክሏል!"
+                        )
+
+                        st.rerun()
+
+                    else:
+                        st.error("❌ የአባል ስም ባዶ መሆን አይችልም!")
+
+                if cancel_edit:
+
+                    st.session_state[f"editing_{member_id}"] = False
+
+                    st.rerun()
+
+        # =========================
+        # DELETE
+        # =========================
+        if delete_clicked:
+
+            st.session_state[f"confirm_delete_{member_id}"] = True
+
+        if st.session_state.get(
+            f"confirm_delete_{member_id}", False
+        ):
+
+            with st.container(border=True):
+
+                st.warning(
+                    f"⚠️ **{member['የአባል ስም']} ({member_id})** "
+                    "ለማጥፋት እርግጠኛ ነዎት?"
+                )
+
+                yes_col, no_col = st.columns(2)
+
+                with yes_col:
+
+                    confirm_delete = st.button(
+                        "🗑️ አዎ፣ አጥፋ",
+                        key=f"confirm_{member_id}",
+                        use_container_width=True
+                    )
+
+                with no_col:
+
+                    cancel_delete = st.button(
+                        "❌ አይ፣ ተመለስ",
+                        key=f"cancel_delete_{member_id}",
+                        use_container_width=True
+                    )
+
+                if confirm_delete:
+
+                    del members_db[member_id]
 
                     save_data_to_excel(members_db)
 
+                    st.session_state[
+                        f"confirm_delete_{member_id}"
+                    ] = False
+
                     st.success(
-                        f"✅ የአባል {selected_id} ስም "
-                        "በተሳካ ሁኔታ ተስተካክሏል።"
+                        f"✅ {member['የአባል ስም']} ከሲስተሙ ተሰርዟል!"
                     )
 
                     st.rerun()
 
-                else:
+                if cancel_delete:
 
-                    st.warning(
-                        "⚠️ የአባል ስም ባዶ መሆን አይችልም!"
-                    )
-
-
-        # ====================================================
-        # DELETE CONFIRMATION
-        # ====================================================
-
-        if delete_btn:
-
-            st.subheader(
-                f"🗑️ {selected_id} - አባል ማጥፋት"
-            )
-
-            st.warning(
-                f"⚠️ በጥንቃቄ! "
-                f"**{selected_member['የአባል ስም']}** "
-                "የሚለውን አባል ከሲስተሙ ላይ ለመሰረዝ ነው።"
-            )
-
-            st.error(
-                "ይህን አባል ከሰረዙ የአባሉ የቁጠባ፣ "
-                "የብድር እና የዕዳ መረጃ ከዚህ Excel database ውስጥ ይሰረዛል።"
-            )
-
-            confirm_delete = st.checkbox(
-                "አዎ፣ ይህን አባል መሰረዝ እፈልጋለሁ።",
-                key=f"confirm_delete_{selected_id}"
-            )
-
-            if confirm_delete:
-
-                final_delete_btn = st.button(
-                    "❌ በእርግጥ አባሉን ሰርዝ",
-                    type="primary"
-                )
-
-                if final_delete_btn:
-
-                    del members_db[selected_id]
-
-                    save_data_to_excel(
-                        members_db
-                    )
-
-                    st.success(
-                        f"✅ አባል {selected_id} "
-                        "በተሳካ ሁኔታ ተሰርዟል።"
-                    )
+                    st.session_state[
+                        f"confirm_delete_{member_id}"
+                    ] = False
 
                     st.rerun()
 
-    else:
+        st.divider()
 
-        st.info(
-            "📌 እስካሁን በሲስተሙ ላይ "
-            "የተመዘገበ መረጃ የለም።"
-        )
+else:
+
+    st.info("📌 እስካሁን የተመዘገበ አባል የለም።")

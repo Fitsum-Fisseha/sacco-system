@@ -1,11 +1,10 @@
-import streamlit as st 
-import pandas as pd 
-import os 
-import base64 
-import math from io 
-import StringIO, BytesIO 
-from openpyxl 
-import load_workbook
+import streamlit as st
+import pandas as pd
+import os
+import base64
+import math
+from io import StringIO, BytesIO
+from openpyxl import load_workbook
 
 # ============================================================
 # PAGE CONFIGURATION

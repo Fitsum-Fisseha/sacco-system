@@ -6,7 +6,6 @@ import math
 from io import StringIO, BytesIO
 from datetime import datetime
 
-
 # ============================================================
 # CONFIGURATION
 # ============================================================

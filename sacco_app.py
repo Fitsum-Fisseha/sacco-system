@@ -2912,244 +2912,318 @@ elif page == "📊 ጠቅላላ ሪፖርት":
 # ============================================================
 # 7. EDIT MEMBERS
 # ============================================================
-if page == "👤 አባል መመዝገቢያ":
-
-    st.header("👤 አዲስ አባል መመዝገቢያ")
-
-    st.info("⚠️ የመታወቂያ ቁጥር ማስገባት ግዴታ ነው።")
 
 elif page == "✏️ የአባላት መረጃ ማስተካከያ":
 
-    st.header(
-        "✏️ የአባላት መረጃ ማስተካከያ"
-    )
+    st.header("✏️ የአባላት መረጃ ማስተካከያ")
 
-    search = st.text_input(
-        "🔎 አባል ፈልግ",
-        key="edit_search"
-    )
-
-    filtered = filter_members(
-        members,
-        search,
-        "ሁሉም"
-    )
-
-    if not filtered:
-
-        st.warning(
-            "አባል አልተገኘም።"
-        )
-
+    if not members:
+        st.warning("ምንም የተመዘገበ አባል የለም።")
     else:
 
-        options = [
-            f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")}'
-            for m in filtered
-        ]
+        # ----------------------------------------------------
+        # Search / select member
+        # ----------------------------------------------------
+        st.subheader("🔎 አባል ይምረጡ")
 
-        selected = st.selectbox(
-            "አባል ይምረጡ",
-            options,
-            key="edit_member"
-        )
+        member_options = []
 
-        selected_number = int(
-            selected.split(" - ")[0]
-        )
+        for member in members:
+            member_number = safe_int(
+                member.get("የአባል ቁጥር")
+            )
 
-        member_index = next(
-            i
-            for i, m in enumerate(members)
-            if safe_int(
-                m.get(
-                    "የአባል ቁጥር"
+            member_name = str(
+                member.get("ስም", "")
+            ).strip()
+
+            member_id = str(
+                member.get(
+                    "ብሔራዊ መታወቂያ",
+                    ""
                 )
-            ) == selected_number
+            ).strip()
+
+            if member_id:
+                display_text = (
+                    f"{member_number} - "
+                    f"{member_name} - "
+                    f"ID: {member_id}"
+                )
+            else:
+                display_text = (
+                    f"{member_number} - "
+                    f"{member_name} - "
+                    f"ID: የለም"
+                )
+
+            member_options.append(
+                (member_number, display_text)
+            )
+
+        selected_member_number = st.selectbox(
+            "አባል",
+            options=[
+                number
+                for number, _ in member_options
+            ],
+            format_func=lambda x: next(
+                text
+                for number, text in member_options
+                if number == x
+            )
         )
 
-        member = members[
-            member_index
-        ]
+        # ----------------------------------------------------
+        # Find selected member
+        # ----------------------------------------------------
+        selected_member = None
 
-        col1, col2 = st.columns(2)
+        for member in members:
+            if (
+                safe_int(
+                    member.get("የአባል ቁጥር")
+                )
+                == safe_int(
+                    selected_member_number
+                )
+            ):
+                selected_member = member
+                break
 
-        with col1:
+        if selected_member is not None:
 
+            st.divider()
+
+            st.subheader("📝 የአባል መረጃ")
+
+            # ------------------------------------------------
+            # Member number - READ ONLY
+            # ------------------------------------------------
+            st.text_input(
+                "የአባል ቁጥር",
+                value=str(
+                    selected_member.get(
+                        "የአባል ቁጥር",
+                        ""
+                    )
+                ),
+                disabled=True
+            )
+
+            # ------------------------------------------------
+            # Name
+            # ------------------------------------------------
             new_name = st.text_input(
                 "ስም",
                 value=str(
-                    member.get(
+                    selected_member.get(
                         "ስም",
                         ""
                     )
                 )
             )
 
+            # ------------------------------------------------
+            # National ID
+            # IMPORTANT:
+            # Keep the exact existing column name:
+            # "ብሔራዊ መታወቂያ"
+            # ------------------------------------------------
             new_national_id = st.text_input(
-                "ብሔራዊ መታወቂያ",
+                "ብሔራዊ መታወቂያ *",
                 value=str(
-                    member.get(
+                    selected_member.get(
                         "ብሔራዊ መታወቂያ",
                         ""
                     )
-                )
-            )
-
-        with col2:
-
-            new_photo = st.text_input(
-                "ፎቶ",
-                value=str(
-                    member.get(
-                        "ፎቶ",
-                        ""
-                    )
-                )
-            )
-
-            new_registration_fee = st.number_input(
-                "የመመዝገቢያ ክፍያ",
-                min_value=0.0,
-                value=safe_float(
-                    member.get(
-                        "የመመዝገቢያ ክፍያ (ብር)",
-                        REGISTRATION_FEE
-                    )
                 ),
-                step=50.0
+                help="የመታወቂያ ቁጥር ማስገባት ግዴታ ነው።"
             )
 
-        if st.button(
-            "💾 ለውጥ አስቀምጥ",
-            type="primary"
-        ):
+            # ------------------------------------------------
+            # Registration fee - READ ONLY
+            # ------------------------------------------------
+            registration_fee = safe_float(
+                selected_member.get(
+                    "የመመዝገቢያ ክፍያ (ብር)",
+                    500
+                )
+            )
 
-            if not new_name.strip():
+            st.number_input(
+                "የመመዝገቢያ ክፍያ (ብር)",
+                value=float(registration_fee),
+                disabled=True
+            )
 
-                st.error(
-                    "ስም ባዶ መሆን አይችልም።"
+            # ------------------------------------------------
+            # Show existing ID status
+            # ------------------------------------------------
+            current_id = str(
+                selected_member.get(
+                    "ብሔራዊ መታወቂያ",
+                    ""
+                )
+            ).strip()
+
+            if current_id:
+                st.success(
+                    f"የአሁኑ መታወቂያ: {current_id}"
+                )
+            else:
+                st.warning(
+                    "⚠️ ይህ አባል እስካሁን "
+                    "የመታወቂያ ቁጥር የለውም። "
+                    "ከማስቀመጥ በፊት መሙላት አለበት።"
                 )
 
-            elif national_id_exists(
-                members,
-                new_national_id,
-                selected_number
+            st.divider()
+
+            # ------------------------------------------------
+            # Save changes
+            # ------------------------------------------------
+            if st.button(
+                "💾 ለውጥ አስቀምጥ",
+                type="primary",
+                use_container_width=True
             ):
 
-                st.error(
-                    "ይህ መታወቂያ "
-                    "ሌላ አባል ላይ አለ።"
-                )
-
-            else:
-
-                member["ስም"] = (
-                    new_name.strip()
-                )
-
-                member[
-                    "ብሔራዊ መታወቂያ"
-                ] = (
+                cleaned_name = new_name.strip()
+                cleaned_national_id = (
                     new_national_id.strip()
                 )
 
-                member["ፎቶ"] = (
-                    new_photo.strip()
-                )
+                # ============================================
+                # VALIDATION 1 — Name required
+                # ============================================
+                if not cleaned_name:
 
-                member[
-                    "የመመዝገቢያ ክፍያ (ብር)"
-                ] = new_registration_fee
+                    st.error(
+                        "❌ ስም ባዶ መሆን አይችልም።"
+                    )
 
-                save_data_to_excel(
+                # ============================================
+                # VALIDATION 2 — National ID required
+                # ============================================
+                elif not cleaned_national_id:
+
+                    st.error(
+                        "❌ የመታወቂያ ቁጥር "
+                        "ማስገባት ግዴታ ነው።"
+                    )
+
+                # ============================================
+                # VALIDATION 3 — Duplicate national ID
+                # ============================================
+                elif national_id_exists(
                     members,
-                    payment_history,
-                    payment_requests
-                )
+                    cleaned_national_id,
+                    selected_member_number
+                ):
 
-                st.session_state.members = (
-                    members
-                )
+                    st.error(
+                        "❌ ይህ የመታወቂያ ቁጥር "
+                        "ሌላ አባል ላይ አለ። "
+                        "እባክዎ ሌላ የመታወቂያ ቁጥር ያስገቡ።"
+                    )
 
-                st.success(
-                    "የአባሉ መረጃ ተስተካክሏል።"
-                )
+                # ============================================
+                # VALIDATION 4 — Same member number
+                # ============================================
+                else:
 
-                st.rerun()
+                    # ----------------------------------------
+                    # Update only editable information
+                    # ----------------------------------------
+                    selected_member["ስም"] = cleaned_name
 
-        st.divider()
+                    selected_member[
+                        "ብሔራዊ መታወቂያ"
+                    ] = cleaned_national_id
 
-        st.subheader(
-            "💰 የአባሉ ቁጠባ"
-        )
+                    # Keep registration fee unchanged.
+                    if (
+                        "የመመዝገቢያ ክፍያ (ብር)"
+                        not in selected_member
+                    ):
+                        selected_member[
+                            "የመመዝገቢያ ክፍያ (ብር)"
+                        ] = 500
 
-        savings_df = pd.DataFrame({
-            "ወር": MONTHS,
-            "ቁጠባ": [
-                safe_float(
-                    member.get(
+                    # ----------------------------------------
+                    # Save to Excel
+                    # ----------------------------------------
+                    try:
+
+                        save_data_to_excel(
+                            members,
+                            payment_history,
+                            payment_requests
+                        )
+
+                        st.success(
+                            "✅ የአባሉ መረጃ "
+                            "በትክክል ተስተካክሏል።"
+                        )
+
+                        st.rerun()
+
+                    except Exception as e:
+
+                        st.error(
+                            "❌ መረጃውን ማስቀመጥ "
+                            "አልተቻለም።"
+                        )
+
+                        st.exception(e)
+
+            # ------------------------------------------------
+            # Current member information
+            # ------------------------------------------------
+            st.divider()
+
+            st.subheader("📊 የአባሉ አሁን ያለ መረጃ")
+
+            total_savings = 0
+
+            for month in MONTHS:
+                total_savings += safe_float(
+                    selected_member.get(
                         month,
                         0
                     )
                 )
-                for month in MONTHS
-            ]
-        })
 
-        st.dataframe(
-            savings_df,
-            use_container_width=True,
-            hide_index=True
-        )
+            remaining_debt = safe_float(
+                selected_member.get(
+                    "የቀረው ዕዳ (ብር)",
+                    0
+                )
+            )
 
-        st.metric(
-            "ጠቅላላ ቁጠባ",
-            f"{money(total_savings(member))} ብር"
-        )
+            col1, col2, col3 = st.columns(3)
 
-        st.divider()
-
-        st.subheader(
-            "🗑️ አባል ሰርዝ"
-        )
-
-        st.warning(
-            "⚠️ መሰረዝ የአባሉን መረጃ "
-            "ከሲስተሙ ያስወግዳል።"
-        )
-
-        confirm_delete = st.checkbox(
-            "ይህን አባል መሰረዝ እፈልጋለሁ",
-            key="confirm_delete"
-        )
-
-        if confirm_delete:
-
-            if st.button(
-                "🗑️ አባል ሰርዝ"
-            ):
-
-                members.pop(
-                    member_index
+            with col1:
+                st.metric(
+                    "የአባል ቁጥር",
+                    selected_member.get(
+                        "የአባል ቁጥር",
+                        ""
+                    )
                 )
 
-                save_data_to_excel(
-                    members,
-                    payment_history,
-                    payment_requests
+            with col2:
+                st.metric(
+                    "ጠቅላላ ቁጠባ",
+                    f"{total_savings:,.2f} ብር"
                 )
 
-                st.session_state.members = (
-                    members
+            with col3:
+                st.metric(
+                    "የቀረው ዕዳ",
+                    f"{remaining_debt:,.2f} ብር"
                 )
-
-                st.success(
-                    "አባሉ ተሰርዟል።"
-                )
-
-                st.rerun()
-
 
 # ============================================================
 # FOOTER

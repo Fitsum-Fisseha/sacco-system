@@ -4,7 +4,7 @@ import os
 import base64
 
 # ============================================================
-# PAGE SETTINGS
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
@@ -14,47 +14,47 @@ st.set_page_config(
 
 st.title("🏦 ተስፋ የገንዘብ ቁጠባና ብድር ማህበር")
 
-
-# ============================================================
-# DATABASE
-# ============================================================
-
 DB_FILE = "sacco_database.xlsx"
 
-if os.path.exists(DB_FILE):
+
+# ============================================================
+# LOAD DATABASE
+# ============================================================
+
+def load_data():
+    if not os.path.exists(DB_FILE):
+        return {}
 
     try:
-
-        df_load = pd.read_excel(
+        df = pd.read_excel(
             DB_FILE,
             dtype={"መታወቂያ ቁጥር (ID)": str}
         )
 
-        if "መታወቂያ ቁጥር (ID)" in df_load.columns:
+        if df.empty:
+            return {}
 
-            df_load["መታወቂያ ቁጥር (ID)"] = (
-                df_load["መታወቂያ ቁጥር (ID)"]
-                .astype(str)
-                .str.strip()
-            )
+        if "መታወቂያ ቁጥር (ID)" not in df.columns:
+            return {}
 
-            members_db = (
-                df_load
-                .set_index("መታወቂያ ቁጥር (ID)")
-                .to_dict(orient="index")
-            )
+        df["መታወቂያ ቁጥር (ID)"] = (
+            df["መታወቂያ ቁጥር (ID)"]
+            .astype(str)
+            .str.strip()
+        )
 
-        else:
+        df = df.set_index("መታወቂያ ቁጥር (ID)")
 
-            members_db = {}
+        data = df.to_dict(orient="index")
+
+        # Normalize every member
+        for member_id in data:
+            data[member_id] = normalize_member(data[member_id])
+
+        return data
 
     except Exception:
-
-        members_db = {}
-
-else:
-
-    members_db = {}
+        return {}
 
 
 # ============================================================
@@ -62,135 +62,129 @@ else:
 # ============================================================
 
 def normalize_member(member):
+    defaults = {
+        "የአባል ስም": "",
+        "National ID": "",
+        "የአባል ፎቶ": "",
+        "ጠቅላላ ቁጠባ (ብር)": 0.0,
+        "ብድር ሁኔታ": "የለም",
+        "የተበደረው ጠቅላላ (ብር)": 0.0,
+        "በእጅ የተሰጠ 90% (ብር)": 0.0,
+        "የቀረው ዕዳ (ብር)": 0.0
+    }
 
-    member.setdefault("የአባል ስም", "")
-    member.setdefault("National ID", "")
-    member.setdefault("የአባል ፎቶ", "")
+    for key, value in defaults.items():
+        if key not in member:
+            member[key] = value
 
-    member.setdefault(
-        "ጠቅላላ ቁጠባ (ብር)",
-        0.0
-    )
+    # Clean National ID
+    if pd.isna(member["National ID"]):
+        member["National ID"] = ""
+    else:
+        member["National ID"] = str(member["National ID"]).strip()
 
-    member.setdefault(
-        "ብድር ሁኔታ",
-        "የለበትም"
-    )
+    # Clean name
+    if pd.isna(member["የአባል ስም"]):
+        member["የአባል ስም"] = ""
+    else:
+        member["የአባል ስም"] = str(member["የአባል ስም"]).strip()
 
-    member.setdefault(
-        "የተበደረው ጠቅላላ (ብር)",
-        0.0
-    )
-
-    member.setdefault(
-        "በእጅ የተሰጠ 90% (ብር)",
-        0.0
-    )
-
-    member.setdefault(
-        "የቀረው ዕዳ (ብር)",
-        0.0
-    )
-
-    money_columns = [
+    # Numeric fields
+    numeric_fields = [
         "ጠቅላላ ቁጠባ (ብር)",
         "የተበደረው ጠቅላላ (ብር)",
         "በእጅ የተሰጠ 90% (ብር)",
         "የቀረው ዕዳ (ብር)"
     ]
 
-    for column in money_columns:
-
+    for field in numeric_fields:
         try:
-
-            value = member[column]
-
-            if pd.isna(value):
-                value = 0.0
-
-            member[column] = float(value)
-
+            if pd.isna(member[field]):
+                member[field] = 0.0
+            else:
+                member[field] = float(member[field])
         except:
+            member[field] = 0.0
 
-            member[column] = 0.0
+    if pd.isna(member["የአባል ፎቶ"]):
+        member["የአባል ፎቶ"] = ""
 
     return member
-
-
-for member_id in list(members_db.keys()):
-
-    members_db[member_id] = normalize_member(
-        members_db[member_id]
-    )
 
 
 # ============================================================
 # SAVE DATABASE
 # ============================================================
 
-def save_data_to_excel(db):
+def save_data_to_excel(data):
+    rows = []
 
-    if db:
+    for member_id, member in data.items():
+        row = member.copy()
+        row["መታወቂያ ቁጥር (ID)"] = str(member_id)
+        rows.append(row)
 
-        df_save = pd.DataFrame.from_dict(
-            db,
-            orient="index"
-        )
+    if rows:
+        df = pd.DataFrame(rows)
 
-        df_save.index.name = (
-            "መታወቂያ ቁጥር (ID)"
-        )
+        # Keep ID as first column
+        first_column = "መታወቂያ ቁጥር (ID)"
 
-        df_save.reset_index().to_excel(
-            DB_FILE,
-            index=False
-        )
+        other_columns = [
+            col for col in df.columns
+            if col != first_column
+        ]
+
+        df = df[[first_column] + other_columns]
 
     else:
+        df = pd.DataFrame(
+            columns=[
+                "መታወቂያ ቁጥር (ID)",
+                "የአባል ስም",
+                "National ID",
+                "የአባል ፎቶ",
+                "ጠቅላላ ቁጠባ (ብር)",
+                "ብድር ሁኔታ",
+                "የተበደረው ጠቅላላ (ብር)",
+                "በእጅ የተሰጠ 90% (ብር)",
+                "የቀረው ዕዳ (ብር)"
+            ]
+        )
 
-        if os.path.exists(DB_FILE):
+    df.to_excel(DB_FILE, index=False)
 
-            try:
-                os.remove(DB_FILE)
 
-            except:
-                pass
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
+
+data = load_data()
 
 
 # ============================================================
 # NATIONAL ID DUPLICATE CHECK
 # ============================================================
 
-def national_id_exists(
-    national_id,
-    exclude_member_id=None
-):
+def national_id_exists(national_id, exclude_member_id=None):
 
-    national_id = str(
-        national_id
-    ).strip()
+    national_id = str(national_id).strip()
 
-    for member_id, member in members_db.items():
+    # Empty National ID is allowed
+    if not national_id:
+        return False
 
-        if (
-            exclude_member_id is not None
-            and str(member_id)
-            == str(exclude_member_id)
-        ):
-            continue
+    for member_id, member in data.items():
 
-        existing_national_id = str(
-            member.get(
-                "National ID",
-                ""
-            )
+        if exclude_member_id is not None:
+            if str(member_id) == str(exclude_member_id):
+                continue
+
+        existing_id = str(
+            member.get("National ID", "")
         ).strip()
 
-        if (
-            existing_national_id
-            and existing_national_id
-            == national_id
-        ):
+        if existing_id and existing_id == national_id:
             return True
 
     return False
@@ -200,79 +194,62 @@ def national_id_exists(
 # LOAN PAYMENT FUNCTION
 # ============================================================
 
-def apply_loan_payment(
-    member,
-    payment_amount
-):
+def apply_loan_payment(member, payment_amount):
+
+    payment_amount = float(payment_amount)
+
+    remaining_debt = float(
+        member.get("የቀረው ዕዳ (ብር)", 0)
+    )
 
     original_loan = float(
-        member.get(
-            "የተበደረው ጠቅላላ (ብር)",
-            0
-        )
+        member.get("የተበደረው ጠቅላላ (ብር)", 0)
     )
 
-    outstanding = float(
-        member.get(
-            "የቀረው ዕዳ (ብር)",
-            0
-        )
+    if remaining_debt <= 0:
+        member["ብድር ሁኔታ"] = "የለም"
+        member["የቀረው ዕዳ (ብር)"] = 0.0
+        return payment_amount
+
+    # 2% monthly interest based on original loan
+    monthly_interest = original_loan * 0.02
+
+    # Interest is paid first
+    interest_paid = min(payment_amount, monthly_interest)
+
+    remaining_payment = payment_amount - interest_paid
+
+    # Remaining amount reduces principal
+    principal_paid = min(
+        remaining_payment,
+        remaining_debt
     )
 
-    monthly_interest = (
-        original_loan * 0.02
-    )
+    new_debt = remaining_debt - principal_paid
 
-    principal_paid = max(
-        float(payment_amount)
-        - monthly_interest,
-        0.0
-    )
+    member["የቀረው ዕዳ (ብር)"] = max(new_debt, 0)
 
-    if principal_paid >= outstanding:
-
-        excess = (
-            principal_paid
-            - outstanding
-        )
-
-        member[
-            "የቀረው ዕዳ (ብር)"
-        ] = 0.0
-
-        member[
-            "ብድር ሁኔታ"
-        ] = "የለበትም"
-
-        # Extra money goes to savings
-        member[
-            "ጠቅላላ ቁጠባ (ብር)"
-        ] += excess
-
+    if member["የቀረው ዕዳ (ብር)"] <= 0:
+        member["የቀረው ዕዳ (ብር)"] = 0.0
+        member["ብድር ሁኔታ"] = "የለም"
     else:
+        member["ብድር ሁኔታ"] = "ያለ ብድር"
 
-        excess = 0.0
+    # Return excess money after debt is cleared
+    total_used = interest_paid + principal_paid
+    excess = payment_amount - total_used
 
-        member[
-            "የቀረው ዕዳ (ብር)"
-        ] = (
-            outstanding
-            - principal_paid
-        )
-
-    return (
-        monthly_interest,
-        principal_paid,
-        excess
-    )
+    return max(excess, 0)
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR MENU
 # ============================================================
 
-menu = st.sidebar.selectbox(
-    "ያሉ አማራጮች",
+st.sidebar.header("📋 ምናሌ")
+
+menu = st.sidebar.radio(
+    "ገጽ ይምረጡ",
     [
         "👤 አባል መመዝገቢያ",
         "💰 የወር ቁጠባ ማስገቢያ",
@@ -291,403 +268,341 @@ menu = st.sidebar.selectbox(
 
 if menu == "👤 አባል መመዝገቢያ":
 
-    st.header(
-        "👤 አዲስ አባል መመዝገቢያ ፎርም"
-    )
+    st.header("👤 አዲስ አባል መመዝገቢያ")
 
-    col1, col2 = st.columns(2)
+    with st.form("member_registration_form"):
 
-    with col1:
+        col1, col2 = st.columns(2)
 
-        m_id = st.text_input(
-            "የአባል መታወቂያ ቁጥር (ID):"
-        ).strip()
+        with col1:
 
-    with col2:
+            member_id = st.text_input(
+                "ID *",
+                placeholder="ለምሳሌ 1"
+            ).strip()
 
-        national_id = st.text_input(
-            "National ID (የብሔራዊ መታወቂያ ቁጥር) *"
-        ).strip()
+            member_name = st.text_input(
+                "የአባል ስም *"
+            ).strip()
 
-    m_name = st.text_input(
-        "የአባል ሙሉ ስም:"
-    )
+            national_id = st.text_input(
+                "National ID (አማራጭ)"
+            ).strip()
 
-    photo = st.file_uploader(
-        "📷 የአባል ፎቶ (አማራጭ)",
-        type=[
-            "jpg",
-            "jpeg",
-            "png"
-        ]
-    )
+        with col2:
 
-    if photo:
+            photo = st.file_uploader(
+                "የአባል ፎቶ (አማራጭ)",
+                type=["jpg", "jpeg", "png"]
+            )
 
-        st.image(
-            photo,
-            width=180
+        submit = st.form_submit_button(
+            "➕ አባል መዝግብ"
         )
 
-    if st.button(
-        "አባል መዝግብ"
-    ):
+    if submit:
 
-        # Mandatory fields
-        if (
-            not m_id
-            or not m_name.strip()
-            or not national_id
-        ):
+        if not member_id:
+            st.error("ID ያስገቡ።")
 
-            st.warning(
-                "⚠️ ID፣ ሙሉ ስም እና National ID "
-                "መሙላት ግዴታ ነው!"
-            )
+        elif not member_name:
+            st.error("የአባል ስም ያስገቡ።")
 
-        # Duplicate member ID
-        elif m_id in members_db:
+        elif member_id in data:
+            st.error("ይህ ID ቀድሞ ተመዝግቧል።")
 
+        elif national_id and national_id_exists(national_id):
             st.error(
-                f"❌ መታወቂያ ቁጥር "
-                f"{m_id} ቀደም ብሎ ተመዝግቧል!"
-            )
-
-        # Duplicate National ID
-        elif national_id_exists(
-            national_id
-        ):
-
-            st.error(
-                "❌ ይህ National ID ቀደም "
-                "ብሎ ተመዝግቧል። "
-                "National ID ልዩ (Unique) መሆን አለበት!"
+                "ይህ National ID ቀድሞ ተመዝግቧል። "
+                "ሌላ National ID ያስገቡ።"
             )
 
         else:
 
             photo_data = ""
 
-            if photo:
+            if photo is not None:
+                photo_bytes = photo.read()
+                photo_data = base64.b64encode(
+                    photo_bytes
+                ).decode("utf-8")
 
-                photo_data = (
-                    base64.b64encode(
-                        photo.getvalue()
-                    ).decode("utf-8")
-                )
-
-            members_db[m_id] = {
-
-                "የአባል ስም":
-                    m_name.strip(),
-
-                "National ID":
-                    national_id,
-
-                "የአባል ፎቶ":
-                    photo_data,
-
-                "ጠቅላላ ቁጠባ (ብር)":
-                    0.0,
-
-                "ብድር ሁኔታ":
-                    "የለበትም",
-
-                "የተበደረው ጠቅላላ (ብር)":
-                    0.0,
-
-                "በእጅ የተሰጠ 90% (ብር)":
-                    0.0,
-
-                "የቀረው ዕዳ (ብር)":
-                    0.0
+            data[member_id] = {
+                "የአባል ስም": member_name,
+                "National ID": national_id,
+                "የአባል ፎቶ": photo_data,
+                "ጠቅላላ ቁጠባ (ብር)": 0.0,
+                "ብድር ሁኔታ": "የለም",
+                "የተበደረው ጠቅላላ (ብር)": 0.0,
+                "በእጅ የተሰጠ 90% (ብር)": 0.0,
+                "የቀረው ዕዳ (ብር)": 0.0
             }
 
-            save_data_to_excel(
-                members_db
-            )
+            save_data_to_excel(data)
 
             st.success(
-                f"✅ {m_name.strip()} "
-                "በተሳካ ሁኔታ ተመዝግቧል!"
+                f"አባል {member_name} በትክክል ተመዝግቧል።"
             )
+
+            st.rerun()
 
 
 # ============================================================
-# 2. SAVINGS
+# 2. MONTHLY SAVINGS
 # ============================================================
 
 elif menu == "💰 የወር ቁጠባ ማስገቢያ":
 
-    st.header(
-        "💰 የወርሃዊ ቁጠባ / "
-        "ብድር ክፍያ መመዝገቢያ"
-    )
+    st.header("💰 የወር ቁጠባ ማስገቢያ")
 
-    s_id = st.text_input(
-        "የአባል መታወቂያ (ID):"
-    ).strip()
+    if not data:
+        st.warning("ምንም አባል አልተመዘገበም።")
 
-    amount = st.number_input(
-        "የሚከፈለው የገንዘብ መጠን (ብር):",
-        min_value=0.0,
-        step=100.0
-    )
+    else:
 
-    if st.button(
-        "ቁጠባ / ክፍያ መዝግብ"
-    ):
+        member_id = st.selectbox(
+            "አባል ይምረጡ",
+            list(data.keys()),
+            format_func=lambda x:
+                f"{x} - {data[x]['የአባል ስም']}"
+        )
 
-        if s_id not in members_db:
+        member = data[member_id]
 
-            st.error(
-                "❌ ይህ መታወቂያ "
-                "በሲስተሙ ውስጥ አልተገኘም!"
-            )
+        st.info(
+            f"👤 አባል: {member['የአባል ስም']}"
+        )
 
-        elif amount <= 0:
+        st.write(
+            f"💰 አሁን ያለ ቁጠባ: "
+            f"{member['ጠቅላላ ቁጠባ (ብር)']:,.2f} ብር"
+        )
+
+        if member["የቀረው ዕዳ (ብር)"] > 0:
 
             st.warning(
-                "⚠️ የሚከፈለው መጠን "
-                "ከ0 በላይ መሆን አለበት!"
+                f"የቀረ ዕዳ: "
+                f"{member['የቀረው ዕዳ (ብር)']:,.2f} ብር"
             )
 
-        else:
+        month = st.selectbox(
+            "ወር ይምረጡ",
+            [
+                "ግንቦት 2018",
+                "ሰኔ 2018",
+                "ሐምሌ 2018",
+                "ነሐሴ 2018",
+                "መስከረም 2019",
+                "ጥቅምት 2019",
+                "ሌላ ወር"
+            ]
+        )
 
-            member = members_db[s_id]
+        amount = st.number_input(
+            "የቁጠባ / ክፍያ መጠን (ብር)",
+            min_value=0.0,
+            step=100.0
+        )
 
-            # If member has loan,
-            # payment goes to loan first
-            if (
-                member["ብድር ሁኔታ"]
-                == "ያለበት"
-                and
-                member[
-                    "የቀረው ዕዳ (ብር)"
-                ] > 0
-            ):
+        if st.button("💾 ቁጠባ መዝግብ"):
 
-                (
-                    interest,
-                    principal_paid,
-                    excess
-                ) = apply_loan_payment(
-                    member,
-                    amount
-                )
+            if amount <= 0:
+                st.error("የገንዘብ መጠን ያስገቡ።")
 
-                save_data_to_excel(
-                    members_db
-                )
+            else:
 
-                if principal_paid == 0:
+                # If there is outstanding debt,
+                # payment goes toward the loan first.
+                if member["የቀረው ዕዳ (ብር)"] > 0:
 
-                    st.warning(
-                        f"⚠️ {amount:,.2f} ብር "
-                        f"የወለዱን {interest:,.2f} ብር "
-                        "አልሞላም። "
-                        "ዋና ዕዳ አልቀነሰም።"
+                    excess = apply_loan_payment(
+                        member,
+                        amount
                     )
 
-                elif (
-                    member["ብድር ሁኔታ"]
-                    == "የለበትም"
-                ):
+                    if excess > 0:
+                        member[
+                            "ጠቅላላ ቁጠባ (ብር)"
+                        ] += excess
 
                     st.success(
-                        f"🎉 ብድሩ ሙሉ በሙሉ "
-                        f"ተከፍሏል። "
-                        f"{excess:,.2f} ብር "
-                        "ትርፍ ወደ ቁጠባ "
-                        "ተጨምሯል።"
+                        f"{amount:,.2f} ብር ተመዝግቧል። "
+                        f"የቀረ ዕዳ: "
+                        f"{member['የቀረው ዕዳ (ብር)']:,.2f} ብር"
                     )
 
                 else:
 
+                    member[
+                        "ጠቅላላ ቁጠባ (ብር)"
+                    ] += amount
+
                     st.success(
-                        f"✅ ክፍያው ወደ ብድር "
-                        "ተተግብሯል። "
-                        f"የቀረው ዕዳ፦ "
-                        f"{member['የቀረው ዕዳ (ብር)']:,.2f} ብር"
+                        f"{amount:,.2f} ብር "
+                        f"በ{month} ተመዝግቧል።"
                     )
 
-            # No loan → normal savings
-            else:
-
-                member[
-                    "ጠቅላላ ቁጠባ (ብር)"
-                ] += amount
-
-                save_data_to_excel(
-                    members_db
+                # Store monthly amount
+                member[month] = (
+                    float(member.get(month, 0) or 0)
+                    + amount
                 )
 
-                st.success(
-                    f"✅ ለ{member['የአባል ስም']} "
-                    f"{amount:,.2f} ብር "
-                    "ቁጠባ ተመዝግቧል።"
-                )
+                save_data_to_excel(data)
+
+                st.rerun()
 
 
 # ============================================================
-# 3. LOAN
+# 3. LOAN SERVICE
 # ============================================================
 
 elif menu == "💵 የብድር አገልግሎት":
 
-    st.header(
-        "💵 የብድር ማመልከቻ እና ስሌት"
-    )
+    st.header("💵 የብድር አገልግሎት")
 
-    loan_id = st.text_input(
-        "የተበዳሪው አባል መታወቂያ (ID):"
-    ).strip()
+    if not data:
+        st.warning("ምንም አባል አልተመዘገበም።")
 
-    loan_amount = st.number_input(
-        "የሚጠይቀው የብድር መጠን (ብር):",
-        min_value=0.0,
-        step=1000.0
-    )
+    else:
 
-    if loan_id in members_db:
-
-        member = members_db[loan_id]
-
-        current_savings = float(
-            member[
-                "ጠቅላላ ቁጠባ (ብር)"
-            ]
+        member_id = st.selectbox(
+            "አባል ይምረጡ",
+            list(data.keys()),
+            format_func=lambda x:
+                f"{x} - {data[x]['የአባል ስም']}"
         )
 
-        max_loan = (
-            current_savings * 4
+        member = data[member_id]
+
+        savings = float(
+            member["ጠቅላላ ቁጠባ (ብር)"]
         )
 
-        st.info(
-            f"💰 የአሁኑ ቁጠባ፦ "
-            f"{current_savings:,.2f} ብር\n\n"
-            f"📌 ከፍተኛ የሚፈቀደው "
-            f"ብድር (4×)፦ "
-            f"{max_loan:,.2f} ብር"
+        max_loan = savings * 4
+
+        st.write(
+            f"👤 አባል: **{member['የአባል ስም']}**"
         )
 
-    if st.button(
-        "ብድር አስላ እና ፍቀድ"
-    ):
+        st.write(
+            f"💰 ጠቅላላ ቁጠባ: "
+            f"**{savings:,.2f} ብር**"
+        )
 
-        if loan_id not in members_db:
+        st.write(
+            f"💵 ከፍተኛ የሚበደር መጠን: "
+            f"**{max_loan:,.2f} ብር**"
+        )
+
+        current_debt = float(
+            member["የቀረው ዕዳ (ብር)"]
+        )
+
+        if current_debt > 0:
 
             st.error(
-                "❌ ይህ መታወቂያ "
-                "በሲስተሙ ውስጥ አልተገኘም!"
-            )
-
-        elif loan_amount <= 0:
-
-            st.warning(
-                "⚠️ የብድር መጠን "
-                "ከ0 በላይ መሆን አለበት!"
+                f"ይህ አባል አሁን "
+                f"{current_debt:,.2f} ብር ዕዳ አለበት። "
+                f"አዲስ ብድር መውሰድ አይችልም።"
             )
 
         else:
 
-            member = members_db[loan_id]
-
-            current_savings = float(
-                member[
-                    "ጠቅላላ ቁጠባ (ብር)"
-                ]
+            loan_amount = st.number_input(
+                "የሚፈለገው ብድር (ብር)",
+                min_value=0.0,
+                max_value=max_loan,
+                step=100.0
             )
 
-            max_loan = (
-                current_savings * 4
-            )
+            if loan_amount > 0:
 
-            # Existing loan
-            if (
-                member["ብድር ሁኔታ"]
-                == "ያለበት"
-            ):
+                fee = loan_amount * 0.10
+                net_payment = loan_amount * 0.90
 
-                st.error(
-                    f"❌ {member['የአባል ስም']} "
-                    "የድሮ ብድር ስላለበት "
-                    "ተጨማሪ መበደር አይችልም!"
+                monthly_principal = loan_amount / 36
+                monthly_interest = loan_amount * 0.02
+                monthly_payment = (
+                    monthly_principal +
+                    monthly_interest
                 )
 
-            # More than 4x savings
-            elif loan_amount > max_loan:
+                st.subheader("📋 የብድር ማጠቃለያ")
 
-                st.error(
-                    f"❌ የብድር ጥያቄው "
-                    "ከሚፈቀደው 4× የቁጠባ "
-                    "መጠን በላይ ነው!\n\n"
-                    f"💰 ቁጠባ፦ "
-                    f"{current_savings:,.2f} ብር\n"
-                    f"📌 ከፍተኛ ብድር፦ "
-                    f"{max_loan:,.2f} ብር"
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "የተበደረው",
+                        f"{loan_amount:,.2f} ብር"
+                    )
+
+                with col2:
+                    st.metric(
+                        "10% ክፍያ",
+                        f"{fee:,.2f} ብር"
+                    )
+
+                with col3:
+                    st.metric(
+                        "በእጅ የሚሰጥ 90%",
+                        f"{net_payment:,.2f} ብር"
+                    )
+
+                st.write(
+                    f"📅 ወርሃዊ ዋና ብድር: "
+                    f"{monthly_principal:,.2f} ብር"
                 )
 
-            else:
-
-                upfront_fee = (
-                    loan_amount * 0.10
+                st.write(
+                    f"📈 ወርሃዊ ወለድ (2%): "
+                    f"{monthly_interest:,.2f} ብር"
                 )
 
-                net_payout = (
-                    loan_amount
-                    - upfront_fee
+                st.write(
+                    f"💳 ወርሃዊ ክፍያ: "
+                    f"**{monthly_payment:,.2f} ብር**"
                 )
 
-                monthly_principal = (
-                    loan_amount / 36
-                )
+                if st.button("💵 ብድር ስጥ"):
 
-                monthly_interest = (
-                    loan_amount * 0.02
-                )
+                    if loan_amount > max_loan:
+                        st.error(
+                            "ከተፈቀደው የብድር መጠን በላይ ነው።"
+                        )
 
-                total_monthly = (
-                    monthly_principal
-                    + monthly_interest
-                )
+                    elif savings <= 0:
+                        st.error(
+                            "ቁጠባ ሳይኖር ብድር መውሰድ አይቻልም።"
+                        )
 
-                member[
-                    "ብድር ሁኔታ"
-                ] = "ያለበት"
+                    else:
 
-                member[
-                    "የተበደረው ጠቅላላ (ብር)"
-                ] = loan_amount
+                        member[
+                            "የተበደረው ጠቅላላ (ብር)"
+                        ] = loan_amount
 
-                member[
-                    "በእጅ የተሰጠ 90% (ብር)"
-                ] = net_payout
+                        member[
+                            "በእጅ የተሰጠ 90% (ብር)"
+                        ] = net_payment
 
-                member[
-                    "የቀረው ዕዳ (ብር)"
-                ] = loan_amount
+                        member[
+                            "የቀረው ዕዳ (ብር)"
+                        ] = loan_amount
 
-                save_data_to_excel(
-                    members_db
-                )
+                        member[
+                            "ብድር ሁኔታ"
+                        ] = "ያለ ብድር"
 
-                st.success(
-                    f"🎉 ለ{member['የአባል ስም']} "
-                    "ብድር ተፈቅዷል!"
-                )
+                        save_data_to_excel(data)
 
-                st.info(
-                    f"💵 በእጅ የሚሰጠው 90%፦ "
-                    f"{net_payout:,.2f} ብር\n\n"
-                    f"📅 የወርሃዊ ክፍያ "
-                    f"(36 ወራት)፦ "
-                    f"{total_monthly:,.2f} ብር\n\n"
-                    f"(ዋና፦ "
-                    f"{monthly_principal:,.2f} + "
-                    f"ወለድ 2%፦ "
-                    f"{monthly_interest:,.2f})"
-                )
+                        st.success(
+                            f"{loan_amount:,.2f} ብር ብድር "
+                            f"ተመዝግቧል።"
+                        )
+
+                        st.rerun()
 
 
 # ============================================================
@@ -696,202 +611,221 @@ elif menu == "💵 የብድር አገልግሎት":
 
 elif menu == "📅 የብድር ክፍያ መመዝገቢያ":
 
-    st.header(
-        "📅 የወርሃዊ ብድር ክፍያ መቀበያ"
-    )
+    st.header("📅 የብድር ክፍያ መመዝገቢያ")
 
-    p_id = st.text_input(
-        "የከፋይ አባል መታወቂያ (ID):"
-    ).strip()
+    members_with_debt = [
+        member_id
+        for member_id, member in data.items()
+        if float(member.get(
+            "የቀረው ዕዳ (ብር)", 0
+        )) > 0
+    ]
 
-    if p_id in members_db:
+    if not members_with_debt:
 
-        member = members_db[p_id]
+        st.info("አሁን የቀረ ዕዳ ያለበት አባል የለም።")
 
-        if (
-            member["ብድር ሁኔታ"]
-            == "ያለበት"
-            and
-            member[
-                "የቀረው ዕዳ (ብር)"
-            ] > 0
-        ):
+    else:
 
-            outstanding = float(
-                member[
+        member_id = st.selectbox(
+            "አባል ይምረጡ",
+            members_with_debt,
+            format_func=lambda x:
+                f"{x} - {data[x]['የአባል ስም']}"
+        )
+
+        member = data[member_id]
+
+        st.write(
+            f"👤 አባል: **{member['የአባል ስም']}**"
+        )
+
+        st.write(
+            f"💵 የመጀመሪያ ብድር: "
+            f"{member['የተበደረው ጠቅላላ (ብር)']:,.2f} ብር"
+        )
+
+        st.write(
+            f"🔴 የቀረ ዕዳ: "
+            f"**{member['የቀረው ዕዳ (ብር)']:,.2f} ብር**"
+        )
+
+        payment = st.number_input(
+            "የክፍያ መጠን (ብር)",
+            min_value=0.0,
+            step=100.0
+        )
+
+        if st.button("💾 ክፍያ መዝግብ"):
+
+            if payment <= 0:
+                st.error(
+                    "የክፍያ መጠን ያስገቡ።"
+                )
+
+            else:
+
+                old_debt = member[
                     "የቀረው ዕዳ (ብር)"
                 ]
-            )
 
-            original_loan = float(
-                member[
-                    "የተበደረው ጠቅላላ (ብር)"
-                ]
-            )
+                excess = apply_loan_payment(
+                    member,
+                    payment
+                )
 
-            monthly_principal = (
-                original_loan / 36
-            )
+                if excess > 0:
 
-            monthly_interest = (
-                original_loan * 0.02
-            )
+                    member[
+                        "ጠቅላላ ቁጠባ (ብር)"
+                    ] += excess
 
-            st.warning(
-                f"📌 {member['የአባል ስም']} "
-                f"ያለበት ዕዳ፦ "
-                f"{outstanding:,.2f} ብር"
-            )
+                save_data_to_excel(data)
 
-            st.write(
-                f"💡 መደበኛ የወር ክፍያ፦ "
-                f"**{monthly_principal + monthly_interest:,.2f} ብር** "
-                f"(ዋና፦ "
-                f"{monthly_principal:,.2f} + "
-                f"ወለድ፦ "
-                f"{monthly_interest:,.2f})"
-            )
+                st.success(
+                    f"{payment:,.2f} ብር ክፍያ ተመዝግቧል።"
+                )
 
-            pay_amount = st.number_input(
-                "አባል አሁን የከፈለው "
-                "ጠቅላላ ብር (ዋና + ወለድ)፦",
-                min_value=0.0
-            )
+                st.write(
+                    f"ቀድሞ ዕዳ: {old_debt:,.2f} ብር"
+                )
 
-            if st.button(
-                "ክፍያ መዝግብ"
-            ):
+                st.write(
+                    f"አሁን የቀረ ዕዳ: "
+                    f"{member['የቀረው ዕዳ (ብር)']:,.2f} ብር"
+                )
 
-                if pay_amount <= 0:
-
-                    st.warning(
-                        "⚠️ የክፍያ መጠን "
-                        "ከ0 በላይ መሆን አለበት!"
+                if excess > 0:
+                    st.info(
+                        f"{excess:,.2f} ብር ተረፍቶ "
+                        f"ወደ ቁጠባ ተጨምሯል።"
                     )
 
-                else:
-
-                    (
-                        interest,
-                        principal_paid,
-                        excess
-                    ) = apply_loan_payment(
-                        member,
-                        pay_amount
-                    )
-
-                    save_data_to_excel(
-                        members_db
-                    )
-
-                    if principal_paid == 0:
-
-                        st.warning(
-                            f"⚠️ ክፍያው "
-                            f"የወለዱን "
-                            f"{interest:,.2f} ብር "
-                            "አልሞላም። "
-                            "ዋና ዕዳ አልቀነሰም።"
-                        )
-
-                    elif (
-                        member["ብድር ሁኔታ"]
-                        == "የለበትም"
-                    ):
-
-                        st.success(
-                            f"🎉 ብድሩ ተጠናቋል።\n\n"
-                            f"💰 {excess:,.2f} ብር "
-                            "ትርፍ ወደ ቁጠባ "
-                            "ተጨምሯል።"
-                        )
-
-                    else:
-
-                        st.success(
-                            f"✅ ክፍያ ተመዝግቧል።\n\n"
-                            f"የቀረው ዕዳ፦ "
-                            f"{member['የቀረው ዕዳ (ብር)']:,.2f} ብር"
-                        )
-
-        else:
-
-            st.info(
-                f"💡 {member['የአባል ስም']} "
-                "ላይ ምንም የብድር "
-                "ዕዳ የለም።"
-            )
-
-    elif p_id:
-
-        st.error(
-            "❌ ይህ መታወቂያ "
-            "በሲስተሙ ውስጥ አልተገኘም!"
-        )
+                st.rerun()
 
 
 # ============================================================
-# 5. REPORT
+# 5. GENERAL REPORT
 # ============================================================
 
 elif menu == "📊 ጠቅላላ ሪፖርት":
 
-    st.header(
-        "📊 ጠቅላላ የአባላት፣ "
-        "የቁጠባ እና የብድር ሪፖርት"
-    )
+    st.header("📊 ጠቅላላ ሪፖርት")
 
-    if members_db:
+    if not data:
 
-        rows = []
+        st.warning("ምንም የአባላት መረጃ የለም።")
 
-        for member_id, member in members_db.items():
+    else:
 
-            rows.append({
+        report_rows = []
 
-                "ID":
-                    member_id,
+        for member_id, member in data.items():
 
-                "National ID":
-                    member.get(
-                        "National ID",
-                        ""
-                    ),
-
-                "የአባል ስም":
-                    member.get(
-                        "የአባል ስም",
-                        ""
-                    ),
-
-                "ጠቅላላ ቁጠባ (ብር)":
-                    member.get(
-                        "ጠቅላላ ቁጠባ (ብር)",
-                        0.0
-                    ),
-
-                "ብድር ሁኔታ":
-                    member.get(
-                        "ብድር ሁኔታ",
-                        "የለበትም"
-                    ),
-
-                "የተበደረው ጠቅላላ (ብር)":
-                    member.get(
-                        "የተበደረው ጠቅላላ (ብር)",
-                        0.0
-                    ),
-
-                "የቀረው ዕዳ (ብር)":
-                    member.get(
-                        "የቀረው ዕዳ (ብር)",
-                        0.0
-                    )
+            report_rows.append({
+                "ID": member_id,
+                "የአባል ስም": member.get(
+                    "የአባል ስም", ""
+                ),
+                "National ID": member.get(
+                    "National ID", ""
+                ),
+                "ጠቅላላ ቁጠባ (ብር)": member.get(
+                    "ጠቅላላ ቁጠባ (ብር)", 0
+                ),
+                "ብድር ሁኔታ": member.get(
+                    "ብድር ሁኔታ", "የለም"
+                ),
+                "የተበደረው ጠቅላላ (ብር)": member.get(
+                    "የተበደረው ጠቅላላ (ብር)", 0
+                ),
+                "በእጅ የተሰጠ 90% (ብር)": member.get(
+                    "በእጅ የተሰጠ 90% (ብር)", 0
+                ),
+                "የቀረው ዕዳ (ብር)": member.get(
+                    "የቀረው ዕዳ (ብር)", 0
+                )
             })
 
-        report_df = pd.DataFrame(
-            rows
-        )
+        report_df = pd.DataFrame(report_rows)
+
+        # Search
+        search = st.text_input(
+            "🔎 አባል ስም / ID / National ID ፈልግ"
+        ).strip()
+
+        if search:
+
+            mask = (
+                report_df["ID"]
+                .astype(str)
+                .str.contains(
+                    search,
+                    case=False,
+                    na=False
+                )
+                |
+                report_df["የአባል ስም"]
+                .astype(str)
+                .str.contains(
+                    search,
+                    case=False,
+                    na=False
+                )
+                |
+                report_df["National ID"]
+                .astype(str)
+                .str.contains(
+                    search,
+                    case=False,
+                    na=False
+                )
+            )
+
+            report_df = report_df[mask]
+
+        # Summary
+        total_members = len(report_df)
+
+        total_savings = report_df[
+            "ጠቅላላ ቁጠባ (ብር)"
+        ].sum()
+
+        total_loans = report_df[
+            "የተበደረው ጠቅላላ (ብር)"
+        ].sum()
+
+        total_debt = report_df[
+            "የቀረው ዕዳ (ብር)"
+        ].sum()
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric(
+                "👥 አባላት",
+                total_members
+            )
+
+        with col2:
+            st.metric(
+                "💰 ጠቅላላ ቁጠባ",
+                f"{total_savings:,.2f} ብር"
+            )
+
+        with col3:
+            st.metric(
+                "💵 ጠቅላላ ብድር",
+                f"{total_loans:,.2f} ብር"
+            )
+
+        with col4:
+            st.metric(
+                "🔴 የቀረ ዕዳ",
+                f"{total_debt:,.2f} ብር"
+            )
+
+        st.divider()
 
         st.dataframe(
             report_df,
@@ -899,327 +833,162 @@ elif menu == "📊 ጠቅላላ ሪፖርት":
             hide_index=True
         )
 
-        st.divider()
+        # ====================================================
+        # DOWNLOAD EXCEL
+        # ====================================================
 
-        if os.path.exists(DB_FILE):
+        download_df = report_df.copy()
 
-            with open(
-                DB_FILE,
-                "rb"
-            ) as file:
+        excel_file = "sacco_report.xlsx"
 
-                st.download_button(
-                    label="📥 የአባላት መረጃ Excel አውርድ",
-                    data=file.read(),
-                    file_name="sacco_database.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-
-    else:
-
-        st.info(
-            "📌 እስካሁን በሲስተሙ ላይ "
-            "የተመዘገበ መረጃ የለም።"
+        download_df.to_excel(
+            excel_file,
+            index=False
         )
+
+        with open(
+            excel_file,
+            "rb"
+        ) as file:
+
+            st.download_button(
+                label="📥 Excel ሪፖርት አውርድ",
+                data=file,
+                file_name="sacco_report.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-"
+                    "officedocument.spreadsheetml.sheet"
+                )
+            )
 
 
 # ============================================================
-# 6. MEMBER EDIT / DELETE
+# 6. EDIT / DELETE MEMBER
 # ============================================================
 
 elif menu == "✏️ የአባላት መረጃ ማስተካከያ":
 
-    st.header(
-        "✏️ የአባላት መረጃ ማስተካከያ"
-    )
+    st.header("✏️ የአባላት መረጃ ማስተካከያ")
 
-    if members_db:
+    if not data:
 
-        for member_id, member in list(
-            members_db.items()
-        ):
-
-            col1, col2, col3, col4, col5, col6 = st.columns(
-                [1, 2.3, 1.5, 1.5, 1.1, 1.1]
-            )
-
-            with col1:
-
-                st.write(
-                    f"**{member_id}**"
-                )
-
-            with col2:
-
-                st.write(
-                    f"**{member['የአባል ስም']}**"
-                )
-
-            with col3:
-
-                st.write(
-                    f"{member['ጠቅላላ ቁጠባ (ብር)']:,.2f} ብር"
-                )
-
-            with col4:
-
-                st.write(
-                    member["ብድር ሁኔታ"]
-                )
-
-            with col5:
-
-                edit_clicked = st.button(
-                    "✏️ አስተካክል",
-                    key=f"edit_{member_id}",
-                    use_container_width=True
-                )
-
-            with col6:
-
-                delete_clicked = st.button(
-                    "🗑️ አጥፋ",
-                    key=f"delete_{member_id}",
-                    use_container_width=True
-                )
-
-            if edit_clicked:
-
-                st.session_state[
-                    f"editing_{member_id}"
-                ] = True
-
-            if delete_clicked:
-
-                st.session_state[
-                    f"confirm_delete_{member_id}"
-                ] = True
-
-            # ------------------------------------------------
-            # EDIT
-            # ------------------------------------------------
-
-            if st.session_state.get(
-                f"editing_{member_id}",
-                False
-            ):
-
-                with st.container(
-                    border=True
-                ):
-
-                    st.subheader(
-                        f"✏️ {member['የአባል ስም']} "
-                        "- መረጃ ማስተካከያ"
-                    )
-
-                    edit_name = st.text_input(
-                        "የአባል ሙሉ ስም",
-                        value=member[
-                            "የአባል ስም"
-                        ],
-                        key=f"name_edit_{member_id}"
-                    )
-
-                    edit_national_id = st.text_input(
-                        "National ID *",
-                        value=str(
-                            member.get(
-                                "National ID",
-                                ""
-                            )
-                        ),
-                        key=f"nid_edit_{member_id}"
-                    )
-
-                    edit_photo = st.file_uploader(
-                        "📷 አዲስ ፎቶ (አማራጭ)",
-                        type=[
-                            "jpg",
-                            "jpeg",
-                            "png"
-                        ],
-                        key=f"photo_edit_{member_id}"
-                    )
-
-                    if member.get(
-                        "የአባል ፎቶ"
-                    ):
-
-                        try:
-
-                            st.image(
-                                base64.b64decode(
-                                    member[
-                                        "የአባል ፎቶ"
-                                    ]
-                                ),
-                                width=120
-                            )
-
-                        except:
-
-                            pass
-
-                    save_col, cancel_col = st.columns(2)
-
-                    with save_col:
-
-                        save_edit = st.button(
-                            "💾 ለውጡን አስቀምጥ",
-                            key=f"save_edit_{member_id}",
-                            use_container_width=True
-                        )
-
-                    with cancel_col:
-
-                        cancel_edit = st.button(
-                            "❌ ሰርዝ",
-                            key=f"cancel_edit_{member_id}",
-                            use_container_width=True
-                        )
-
-                    if save_edit:
-
-                        if (
-                            not edit_name.strip()
-                            or not edit_national_id.strip()
-                        ):
-
-                            st.error(
-                                "❌ ሙሉ ስም እና "
-                                "National ID ባዶ "
-                                "መሆን አይችሉም!"
-                            )
-
-                        elif national_id_exists(
-                            edit_national_id.strip(),
-                            exclude_member_id=member_id
-                        ):
-
-                            st.error(
-                                "❌ ይህ National ID "
-                                "ቀደም ብሎ ለሌላ "
-                                "አባል ተመዝግቧል!"
-                            )
-
-                        else:
-
-                            members_db[
-                                member_id
-                            ][
-                                "የአባል ስም"
-                            ] = edit_name.strip()
-
-                            members_db[
-                                member_id
-                            ][
-                                "National ID"
-                            ] = edit_national_id.strip()
-
-                            if edit_photo:
-
-                                members_db[
-                                    member_id
-                                ][
-                                    "የአባል ፎቶ"
-                                ] = (
-                                    base64.b64encode(
-                                        edit_photo.getvalue()
-                                    ).decode(
-                                        "utf-8"
-                                    )
-                                )
-
-                            save_data_to_excel(
-                                members_db
-                            )
-
-                            st.session_state[
-                                f"editing_{member_id}"
-                            ] = False
-
-                            st.success(
-                                "✅ የአባሉ መረጃ "
-                                "ተስተካክሏል!"
-                            )
-
-                            st.rerun()
-
-                    if cancel_edit:
-
-                        st.session_state[
-                            f"editing_{member_id}"
-                        ] = False
-
-                        st.rerun()
-
-            # ------------------------------------------------
-            # DELETE
-            # ------------------------------------------------
-
-            if st.session_state.get(
-                f"confirm_delete_{member_id}",
-                False
-            ):
-
-                with st.container(
-                    border=True
-                ):
-
-                    st.warning(
-                        f"⚠️ **{member['የአባል ስም']} "
-                        f"({member_id})** "
-                        "ለማጥፋት እርግጠኛ ነዎት?"
-                    )
-
-                    yes_col, no_col = st.columns(2)
-
-                    with yes_col:
-
-                        confirm_delete = st.button(
-                            "🗑️ አዎ፣ አጥፋ",
-                            key=f"confirm_{member_id}",
-                            use_container_width=True
-                        )
-
-                    with no_col:
-
-                        cancel_delete = st.button(
-                            "❌ አይ፣ ተመለስ",
-                            key=f"cancel_delete_{member_id}",
-                            use_container_width=True
-                        )
-
-                    if confirm_delete:
-
-                        del members_db[
-                            member_id
-                        ]
-
-                        save_data_to_excel(
-                            members_db
-                        )
-
-                        st.rerun()
-
-                    if cancel_delete:
-
-                        st.session_state[
-                            f"confirm_delete_{member_id}"
-                        ] = False
-
-                        st.rerun()
-
-            st.divider()
+        st.warning("ምንም አባል አልተመዘገበም።")
 
     else:
 
-        st.info(
-            "📌 እስካሁን የተመዘገበ "
-            "አባል የለም።"
+        member_id = st.selectbox(
+            "አባል ይምረጡ",
+            list(data.keys()),
+            format_func=lambda x:
+                f"{x} - {data[x]['የአባል ስም']}"
         )
+
+        member = data[member_id]
+
+        st.subheader(
+            f"👤 {member['የአባል ስም']}"
+        )
+
+        with st.form("edit_member_form"):
+
+            new_name = st.text_input(
+                "የአባል ስም",
+                value=str(
+                    member.get(
+                        "የአባል ስም", ""
+                    )
+                )
+            ).strip()
+
+            new_national_id = st.text_input(
+                "National ID (አማራጭ)",
+                value=str(
+                    member.get(
+                        "National ID", ""
+                    )
+                )
+            ).strip()
+
+            new_photo = st.file_uploader(
+                "አዲስ ፎቶ (አማራጭ)",
+                type=["jpg", "jpeg", "png"]
+            )
+
+            update = st.form_submit_button(
+                "💾 መረጃ አዘምን"
+            )
+
+        if update:
+
+            if not new_name:
+
+                st.error(
+                    "የአባል ስም ባዶ ሊሆን አይችልም።"
+                )
+
+            elif (
+                new_national_id
+                and national_id_exists(
+                    new_national_id,
+                    exclude_member_id=member_id
+                )
+            ):
+
+                st.error(
+                    "ይህ National ID ቀድሞ "
+                    "ለሌላ አባል ተመዝግቧል።"
+                )
+
+            else:
+
+                member[
+                    "የአባል ስም"
+                ] = new_name
+
+                member[
+                    "National ID"
+                ] = new_national_id
+
+                if new_photo is not None:
+
+                    photo_bytes = new_photo.read()
+
+                    member[
+                        "የአባል ፎቶ"
+                    ] = base64.b64encode(
+                        photo_bytes
+                    ).decode("utf-8")
+
+                save_data_to_excel(data)
+
+                st.success(
+                    "የአባሉ መረጃ በትክክል ተዘምኗል።"
+                )
+
+                st.rerun()
+
+        st.divider()
+
+        st.subheader("🗑️ አባል ሰርዝ")
+
+        confirm_delete = st.checkbox(
+            "ይህን አባል ለመሰረዝ አረጋግጣለሁ"
+        )
+
+        if st.button(
+            "🗑️ አባሉን ሰርዝ",
+            disabled=not confirm_delete
+        ):
+
+            del data[member_id]
+
+            save_data_to_excel(data)
+
+            st.success(
+                "አባሉ ተሰርዟል።"
+            )
+
+            st.rerun()
 
 
 # ============================================================
@@ -1228,18 +997,12 @@ elif menu == "✏️ የአባላት መረጃ ማስተካከያ":
 
 elif menu == "📤 Excel ፋይል አስገባ":
 
-    st.header(
-        "📤 ከኮምፒውተር "
-        "የExcel ፋይል አስገባ"
-    )
+    st.header("📤 Excel ፋይል አስገባ")
 
     st.info(
-        "📌 Excel ፋይሉ የሚከተሉትን "
-        "columns ሊኖሩት ይገባል፦\n\n"
-        "• መታወቂያ ቁጥር (ID)\n"
-        "• የአባል ስም\n"
-        "• National ID\n\n"
-        "National ID ልዩ (Unique) መሆን አለበት።"
+        "Excel ፋይሉ ቢያንስ "
+        "ID እና የአባል ስም እንዲኖረው ያስፈልጋል። "
+        "National ID አማራጭ ነው።"
     )
 
     uploaded_file = st.file_uploader(
@@ -1251,199 +1014,222 @@ elif menu == "📤 Excel ፋይል አስገባ":
 
         try:
 
-            imported_df = pd.read_excel(
+            import_df = pd.read_excel(
                 uploaded_file,
                 dtype=str
             )
 
-            st.subheader(
-                "📋 የሚገባው መረጃ"
-            )
+            import_df = import_df.fillna("")
+
+            st.subheader("👀 የExcel መረጃ")
 
             st.dataframe(
-                imported_df,
-                use_container_width=True
+                import_df,
+                use_container_width=True,
+                hide_index=True
             )
 
-            if st.button(
-                "📥 ወደ ሲስተሙ አስገባ",
-                use_container_width=True
-            ):
+            # Find ID column
+            id_column = None
 
-                required_columns = [
-                    "መታወቂያ ቁጥር (ID)",
-                    "የአባል ስም",
-                    "National ID"
-                ]
+            possible_id_columns = [
+                "መታወቂያ ቁጥር (ID)",
+                "ID",
+                "ተ.ቁ"
+            ]
 
-                missing_columns = [
-                    column
-                    for column in required_columns
-                    if column
-                    not in imported_df.columns
-                ]
+            for col in possible_id_columns:
+                if col in import_df.columns:
+                    id_column = col
+                    break
 
-                if missing_columns:
+            # Find name column
+            name_column = None
 
-                    st.error(
-                        "❌ የሚከተሉት "
-                        "አስፈላጊ columns "
-                        "የሉም፦ "
-                        + ", ".join(
-                            missing_columns
-                        )
-                    )
+            possible_name_columns = [
+                "የአባል ስም",
+                "የሠራተኛው ስም",
+                "Name",
+                "name"
+            ]
 
-                else:
+            for col in possible_name_columns:
+                if col in import_df.columns:
+                    name_column = col
+                    break
 
-                    imported_df = (
-                        imported_df
-                        .dropna(
-                            subset=required_columns
-                        )
-                    )
+            if id_column is None:
 
-                    for column in required_columns:
+                st.error(
+                    "Excel ፋይሉ የID አምድ የለውም።"
+                )
 
-                        imported_df[
-                            column
-                        ] = (
-                            imported_df[column]
-                            .astype(str)
-                            .str.strip()
-                        )
+            elif name_column is None:
 
-                    seen_nids = set()
+                st.error(
+                    "Excel ፋይሉ የአባል ስም አምድ የለውም።"
+                )
 
+            else:
+
+                if st.button(
+                    "📥 ወደ ሲስተሙ አስገባ"
+                ):
+
+                    imported_count = 0
+                    skipped_count = 0
                     errors = []
 
-                    for _, row in imported_df.iterrows():
+                    # Check duplicate IDs inside Excel
+                    ids = (
+                        import_df[id_column]
+                        .astype(str)
+                        .str.strip()
+                    )
 
-                        member_id = row[
-                            "መታወቂያ ቁጥር (ID)"
-                        ]
+                    duplicate_ids = ids[
+                        ids.duplicated()
+                        & (ids != "")
+                    ].unique().tolist()
 
-                        nid = row[
-                            "National ID"
-                        ]
-
-                        if (
-                            member_id
-                            in members_db
-                        ):
-
-                            errors.append(
-                                f"ID {member_id} "
-                                "ቀድሞ አለ"
-                            )
-
-                        if nid in seen_nids:
-
-                            errors.append(
-                                f"National ID "
-                                f"{nid} "
-                                "በExcel ውስጥ "
-                                "ተደግሟል"
-                            )
-
-                        if national_id_exists(
-                            nid
-                        ):
-
-                            errors.append(
-                                f"National ID "
-                                f"{nid} "
-                                "ቀድሞ አለ"
-                            )
-
-                        seen_nids.add(
-                            nid
-                        )
-
-                    if errors:
+                    if duplicate_ids:
 
                         st.error(
-                            "❌ ፋይሉ አልገባም።\n\n"
-                            + "\n".join(
-                                errors[:20]
-                            )
+                            "በExcel ውስጥ የተደጋገሙ IDዎች አሉ፦ "
+                            + ", ".join(duplicate_ids)
                         )
 
                     else:
 
-                        for _, row in imported_df.iterrows():
+                        for _, row in import_df.iterrows():
 
-                            member_id = row[
-                                "መታወቂያ ቁጥር (ID)"
-                            ]
+                            new_id = str(
+                                row[id_column]
+                            ).strip()
 
-                            members_db[
-                                member_id
-                            ] = {
+                            new_name = str(
+                                row[name_column]
+                            ).strip()
 
-                                "የአባል ስም":
-                                    row[
-                                        "የአባል ስም"
-                                    ],
+                            if not new_id:
+                                skipped_count += 1
+                                continue
 
+                            if not new_name:
+                                skipped_count += 1
+                                continue
+
+                            if new_id in data:
+                                skipped_count += 1
+                                continue
+
+                            imported_national_id = ""
+
+                            if "National ID" in import_df.columns:
+                                imported_national_id = str(
+                                    row["National ID"]
+                                ).strip()
+
+                            # National ID is optional,
+                            # but if supplied it must be unique.
+                            if (
+                                imported_national_id
+                                and national_id_exists(
+                                    imported_national_id
+                                )
+                            ):
+                                errors.append(
+                                    f"{new_name} - "
+                                    f"National ID ይደገማል"
+                                )
+                                continue
+
+                            data[new_id] = {
+                                "የአባል ስም": new_name,
                                 "National ID":
-                                    row[
-                                        "National ID"
-                                    ],
-
-                                "የአባል ፎቶ":
-                                    "",
-
-                                "ጠቅላላ ቁጠባ (ብር)":
-                                    0.0,
-
-                                "ብድር ሁኔታ":
-                                    "የለበትም",
-
-                                "የተበደረው ጠቅላላ (ብር)":
-                                    0.0,
-
-                                "በእጅ የተሰጠ 90% (ብር)":
-                                    0.0,
-
-                                "የቀረው ዕዳ (ብር)":
-                                    0.0
+                                    imported_national_id,
+                                "የአባል ፎቶ": "",
+                                "ጠቅላላ ቁጠባ (ብር)": 0.0,
+                                "ብድር ሁኔታ": "የለም",
+                                "የተበደረው ጠቅላላ (ብር)": 0.0,
+                                "በእጅ የተሰጠ 90% (ብር)": 0.0,
+                                "የቀረው ዕዳ (ብር)": 0.0
                             }
 
-                            # Import other columns
-                            for column in imported_df.columns:
+                            # Preserve extra Excel columns
+                            for column in import_df.columns:
 
-                                if column not in required_columns:
+                                if column not in [
+                                    id_column,
+                                    name_column,
+                                    "National ID"
+                                ]:
 
-                                    value = row[
-                                        column
-                                    ]
+                                    value = row[column]
 
-                                    if (
-                                        pd.notna(value)
-                                        and str(value).strip()
-                                    ):
+                                    if value != "":
 
-                                        members_db[
-                                            member_id
-                                        ][column] = value
+                                        try:
+                                            numeric_value = float(
+                                                value
+                                            )
+                                            data[new_id][
+                                                column
+                                            ] = numeric_value
 
-                        save_data_to_excel(
-                            members_db
-                        )
+                                        except:
+                                            data[new_id][
+                                                column
+                                            ] = value
+
+                            imported_count += 1
+
+                        save_data_to_excel(data)
 
                         st.success(
-                            f"✅ {len(imported_df)} "
-                            "አባላት በተሳካ "
-                            "ሁኔታ ገብተዋል!"
+                            f"✅ {imported_count} አባላት "
+                            f"በትክክል ገብተዋል።"
                         )
+
+                        if skipped_count > 0:
+
+                            st.warning(
+                                f"⚠️ {skipped_count} ረድፎች "
+                                f"ተዘልለዋል። "
+                                f"(ID ቀድሞ ካለ ወይም መረጃ ካጣ)"
+                            )
+
+                        if errors:
+
+                            st.error(
+                                "አንዳንድ ረድፎች "
+                                "አልገቡም።"
+                            )
+
+                            for error in errors:
+                                st.write(
+                                    f"• {error}"
+                                )
 
                         st.rerun()
 
         except Exception as e:
 
             st.error(
-                "❌ ፋይሉን ማንበብ "
-                "አልተቻለም።\n\n"
-                f"ምክንያት፦ {e}"
+                f"Excel ፋይሉን ማንበብ አልተቻለም፦ {e}"
             )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.sidebar.divider()
+
+st.sidebar.caption(
+    "🏦 ተስፋ የገንዘብ ቁጠባና ብድር ማህበር"
+)
+
+st.sidebar.caption(
+    f"👥 አባላት: {len(data)}"
+)

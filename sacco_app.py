@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import os
@@ -2033,4 +2032,3 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                     )
 
                     st.rerun()
-```

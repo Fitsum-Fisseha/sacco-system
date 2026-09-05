@@ -1021,142 +1021,205 @@ page = st.sidebar.radio(
 # 1. MEMBER REGISTRATION
 # ============================================================
 
-if page == "👤 አባል መመዝገቢያ":
 
-    st.header(
-        "👤 አዲስ አባል መመዝገቢያ"
+elif page == "👤 አባል መመዝገቢያ":
+
+    st.header("👤 አዲስ አባል መመዝገቢያ")
+
+    st.info("⚠️ የመታወቂያ ቁጥር ማስገባት ግዴታ ነው።")
+
+    name = st.text_input(
+        "ሙሉ ስም *",
+        placeholder="የአባሉን ሙሉ ስም ያስገቡ"
     )
 
-    st.info(
-        f"የመመዝገቢያ ክፍያ፦ "
-        f"{money(REGISTRATION_FEE)} ብር"
+    member_id = st.text_input(
+        "የመታወቂያ ቁጥር *",
+        placeholder="የመታወቂያ ቁጥር ያስገቡ"
     )
 
-    col1, col2 = st.columns(2)
+    photo = st.file_uploader(
+        "ፎቶ",
+        type=["jpg", "jpeg", "png"]
+    )
 
-    with col1:
+    st.write("### 💰 የመመዝገቢያ ክፍያ")
 
-        name = st.text_input(
-            "የአባል ስም"
-        )
+    registration_fee = 500.0
 
-        national_id = st.text_input(
-            "ብሔራዊ መታወቂያ"
-        )
+    st.success(
+        f"የመመዝገቢያ ክፍያ: **{registration_fee:,.2f} ብር**"
+    )
 
-    with col2:
+    if st.button("💾 አባል መዝግብ", type="primary"):
 
-        registration_fee = st.number_input(
-            "የመመዝገቢያ ክፍያ (ብር)",
-            min_value=0.0,
-            value=REGISTRATION_FEE,
-            step=50.0
-        )
-
-        photo = st.text_input(
-            "ፎቶ መረጃ / Photo (ከፈለጉ)"
-        )
-
-    if st.button(
-        "➕ አባል መመዝገብ",
-        type="primary"
-    ):
-
+        # ----------------------------
+        # 1. Check name
+        # ----------------------------
         if not name.strip():
+            st.error("❌ ሙሉ ስም ማስገባት ግዴታ ነው!")
+            st.stop()
 
-            st.error(
-                "የአባል ስም ያስገቡ።"
+        # ----------------------------
+        # 2. Check ID - MANDATORY
+        # ----------------------------
+        member_id = str(member_id).strip()
+
+        if not member_id:
+            st.error("❌ የመታወቂያ ቁጥር ማስገባት ግዴታ ነው!")
+            st.stop()
+
+        # ----------------------------
+        # 3. Make sure ID column exists
+        # ----------------------------
+        if "የመታወቂያ ቁጥር" not in db.columns:
+            db["የመታወቂያ ቁጥር"] = ""
+
+        # ----------------------------
+        # 4. Normalize existing IDs
+        # ----------------------------
+        existing_ids = (
+            db["የመታወቂያ ቁጥር"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        # ----------------------------
+        # 5. DUPLICATE ID CHECK
+        # ----------------------------
+        duplicate_rows = db[existing_ids == member_id]
+
+        if not duplicate_rows.empty:
+
+            existing_member = duplicate_rows.iloc[0]
+
+            existing_name = existing_member.get(
+                "ሙሉ ስም",
+                "ያልታወቀ"
             )
 
-        elif national_id_exists(
-            members,
-            national_id
-        ):
+            existing_number = existing_member.get(
+                "ተ.ቁ",
+                ""
+            )
 
             st.error(
-                "ይህ ብሔራዊ መታወቂያ "
-                "አስቀድሞ አለ።"
+                "❌ ይህ መታወቂያ ቁጥር ቀድሞ ተመዝግቧል!"
             )
+
+            st.warning(
+                f"አባል: **{existing_name}**\n\n"
+                f"ተ.ቁ: **{existing_number}**\n\n"
+                f"መታወቂያ ቁጥር: **{member_id}**"
+            )
+
+            st.stop()
+
+        # ----------------------------
+        # 6. Generate next member number
+        # ----------------------------
+        if "ተ.ቁ" in db.columns and len(db) > 0:
+
+            numbers = pd.to_numeric(
+                db["ተ.ቁ"],
+                errors="coerce"
+            )
+
+            if numbers.notna().any():
+                next_number = int(numbers.max()) + 1
+            else:
+                next_number = 1
 
         else:
+            next_number = 1
 
-            numbers = [
-                safe_int(
-                    m.get(
-                        "የአባል ቁጥር"
-                    )
-                )
-                for m in members
-            ]
+        # ----------------------------
+        # 7. Prepare photo
+        # ----------------------------
+        photo_data = ""
 
-            new_number = (
-                max(numbers) + 1
-                if numbers
-                else 1
-            )
+        if photo is not None:
+            photo_data = base64.b64encode(
+                photo.getvalue()
+            ).decode("utf-8")
 
-            new_member = {
-                "የአባል ቁጥር": new_number,
-                "ስም": name.strip(),
-                "ብሔራዊ መታወቂያ": national_id.strip(),
-                "ፎቶ": photo.strip(),
+        # ----------------------------
+        # 8. Create new member
+        # ----------------------------
+        new_member = {}
 
-                "የመመዝገቢያ ክፍያ (ብር)":
-                    registration_fee,
+        # Member number
+        new_member["ተ.ቁ"] = next_number
 
-                "የተበደረ ብር": 0.0,
+        # Name
+        new_member["ሙሉ ስም"] = name.strip()
 
-                "10% የብድር ክፍያ (ብር)":
-                    0.0,
+        # ID
+        new_member["የመታወቂያ ቁጥር"] = member_id
 
-                "በእጅ የተሰጠ 90% (ብር)":
-                    0.0,
+        # Photo
+        new_member["ፎቶ"] = photo_data
 
-                "የብድር ጊዜ (ወር)": 0,
+        # Registration fee - SEPARATE
+        new_member["የመመዝገቢያ ክፍያ (ብር)"] = registration_fee
 
-                "የብድር ወርሃዊ ክፍያ (ብር)":
-                    0.0,
+        # ----------------------------
+        # 9. Initialize 12 savings months
+        # ----------------------------
+        for month in MONTHS:
+            new_member[month] = 0.0
 
-                "የቀረው ዋና ብድር (ብር)":
-                    0.0,
+        # ----------------------------
+        # 10. Initialize loan fields
+        # ----------------------------
+        new_member["የብድር መጀመሪያ መጠን (ብር)"] = 0.0
 
-                "የቀረው ዕዳ (ብር)":
-                    0.0,
+        new_member["10% የብድር ክፍያ (ብር)"] = 0.0
 
-                "የተከፈለ ወለድ (ብር)":
-                    0.0,
+        new_member["በእጅ የተሰጠ 90% (ብር)"] = 0.0
 
-                "የተከፈለ ዋና ብድር (ብር)":
-                    0.0,
+        new_member["የብድር ጊዜ (ወር)"] = 0
 
-                "የተበደረበት ቀን":
-                    ""
-            }
+        new_member["የብድር ወርሃዊ ክፍያ (ብር)"] = 0.0
 
-            for month in MONTHS:
-                new_member[month] = 0.0
+        new_member["የቀረው ዋና ብድር (ብር)"] = 0.0
 
-            members.append(
-                normalize_member(
-                    new_member
-                )
-            )
+        new_member["የቀረው ዕዳ (ብር)"] = 0.0
 
-            save_data_to_excel(
-                members,
-                payment_history,
-                payment_requests
-            )
+        new_member["የተከፈለ ወለድ (ብር)"] = 0.0
 
-            st.session_state.members = members
+        new_member["የተከፈለ ዋና ብድር (ብር)"] = 0.0
 
-            st.success(
-                f"{name} በአባል ቁጥር "
-                f"{new_number} ተመዝግቧል።"
-            )
+        new_member["የብድር መጀመሪያ ቀን"] = ""
 
-            st.rerun()
+        # ----------------------------
+        # 11. Add member to database
+        # ----------------------------
+        db = pd.concat(
+            [
+                db,
+                pd.DataFrame([new_member])
+            ],
+            ignore_index=True
+        )
 
+        # ----------------------------
+        # 12. Save
+        # ----------------------------
+        save_data_to_excel(db)
+
+        st.success(
+            f"✅ {name.strip()} በተሳካ ሁኔታ ተመዝግቧል!"
+        )
+
+        st.info(
+            f"ተ.ቁ: **{next_number}**  |  "
+            f"የመታወቂያ ቁጥር: **{member_id}**  |  "
+            f"የመመዝገቢያ ክፍያ: **500 ብር**"
+        )
+
+        st.rerun()
 
 # ============================================================
 # 2. MONTHLY SAVINGS

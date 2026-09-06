@@ -1653,37 +1653,40 @@ elif page == "📊 ጠቅላላ ሪፖርት":
             )
         })
 
-report_df = pd.DataFrame(report_rows)
+    report_df = pd.DataFrame(report_rows)
 
-# --------------------------------------------------------
-# MEMBER REPORT FILTER
-# --------------------------------------------------------
+    # --------------------------------------------------------
+    # MEMBER REPORT FILTER
+    # --------------------------------------------------------
 
-filter_text = st.text_input(
-    "🔎 አባል በስም ወይም በአባል ቁጥር ፈልግ",
-    placeholder="ስም ወይም የአባል ቁጥር ያስገቡ..."
-)
+    filter_text = st.text_input(
+        "🔎 አባል በስም ወይም በአባል ቁጥር ፈልግ",
+        placeholder="ስም ወይም የአባል ቁጥር ያስገቡ..."
+    )
 
-if filter_text.strip():
-    search_text = filter_text.strip().lower()
+    if filter_text.strip():
 
-    filtered_report_df = report_df[
-        report_df["ስም"].astype(str).str.lower().str.contains(
-            search_text, na=False
-        )
-        |
-        report_df["የአባል ቁጥር"].astype(str).str.contains(
-            search_text, na=False
-        )
-    ]
-else:
-    filtered_report_df = report_df
+        search_text = filter_text.strip().lower()
 
-st.dataframe(
-    filtered_report_df,
-    use_container_width=True,
-    hide_index=True
-)
+        filtered_report_df = report_df[
+            report_df["ስም"].astype(str).str.lower().str.contains(
+                search_text, na=False
+            )
+            |
+            report_df["የአባል ቁጥር"].astype(str).str.contains(
+                search_text, na=False
+            )
+        ]
+
+    else:
+
+        filtered_report_df = report_df
+
+    st.dataframe(
+        filtered_report_df,
+        use_container_width=True,
+        hide_index=True
+    )
 
     # --------------------------------------------------------
     # FULL PAYMENT HISTORY

@@ -78,6 +78,9 @@ ROLE_PERMISSIONS = {
         "🏠 ዋና ዳሽቦርድ",
         "📊 ጠቅላላ ሪፖርት",
     },
+    "Member": {
+        "👤 የእኔ መረጃ",
+    },
 }
 
 ALL_ROLES = list(ROLE_PERMISSIONS.keys())
@@ -396,6 +399,7 @@ def create_initial_users():
         "username": DEFAULT_ADMIN_USERNAME,
         "password_hash": hash_password(DEFAULT_ADMIN_PASSWORD),
         "role": "Admin",
+        "member_number": "",
         "active": "Yes",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }]
@@ -908,6 +912,8 @@ def load_database():
                 sheet_name="ተጠቃሚዎች"
             )
             users = users_df.fillna("").to_dict(orient="records")
+            for user in users:
+                user["member_number"] = str(user.get("member_number", "") or "").strip()
         else:
             users = create_initial_users()
 
@@ -1171,6 +1177,7 @@ if not st.session_state.get("authenticated", False):
             st.session_state.current_user = {
                 "username": str(found_user.get("username", "")),
                 "role": str(found_user.get("role", "Reports")),
+                "member_number": str(found_user.get("member_number", "") or "").strip(),
             }
             log_action(
                 audit_log,
@@ -1222,6 +1229,7 @@ ALL_PAGES = [
     "📊 ጠቅላላ ሪፖርት",
     "✏️ የአባላት መረጃ ማስተካከያ",
     "👥 ተጠቃሚዎች አስተዳደር",
+    "👤 የእኔ መረጃ",
 ]
 
 allowed_pages = [
@@ -1246,6 +1254,74 @@ if st.sidebar.button("💾 የዳታቤዝ Backup ፍጠር"):
             st.sidebar.error(f"Backup ማድረግ አልተቻለም፦ {e}")
     else:
         st.sidebar.warning("እስካሁን Excel database የለም።")
+
+
+# ============================================================
+# MEMBER PORTAL - OWN INFORMATION ONLY
+# ============================================================
+
+if page == "👤 የእኔ መረጃ":
+    if current_user.get("role") != "Member":
+        st.error("❌ ይህ ገጽ ለMember account ብቻ ነው።")
+        st.stop()
+
+    linked_number = str(current_user.get("member_number", "") or "").strip()
+    my_member = next(
+        (m for m in members if str(safe_int(m.get("የአባል ቁጥር"))) == linked_number),
+        None
+    )
+
+    if not my_member:
+        st.error("❌ ይህ account ከማንኛውም አባል ጋር አልተገናኘም። Admin እንዲያስተካክለው ያሳውቁ።")
+        st.stop()
+
+    st.header("👤 የእኔ መረጃ")
+    st.success(f"እንኳን ደህና መጡ፣ {my_member.get('ስም', '')}!")
+
+    total_my_savings = total_savings(my_member)
+    my_loan = safe_float(my_member.get("የተበደረ ብር", 0))
+    my_remaining = safe_float(my_member.get("የቀረው ዕዳ (ብር)", 0))
+    my_interest = safe_float(my_member.get("የተከፈለ ወለድ (ብር)", 0))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💰 ጠቅላላ ቁጠባ", f"{money(total_my_savings)} ብር")
+    c2.metric("💵 የተበደረ", f"{money(my_loan)} ብር")
+    c3.metric("📌 ቀሪ ዕዳ", f"{money(my_remaining)} ብር")
+    c4.metric("📈 የተከፈለ ወለድ", f"{money(my_interest)} ብር")
+
+    st.divider()
+    st.subheader("📋 የአባል መረጃ")
+    profile = pd.DataFrame([{
+        "የአባል ቁጥር": my_member.get("የአባል ቁጥር", ""),
+        "ስም": my_member.get("ስም", ""),
+        "ብሔራዊ መታወቂያ": format_national_id(my_member.get("ብሔራዊ መታወቂያ", "")),
+        "መመዝገቢያ ክፍያ": f"{money(my_member.get('የመመዝገቢያ ክፍያ (ብር)', 0))} ብር",
+    }])
+    st.dataframe(profile, use_container_width=True, hide_index=True)
+
+    st.subheader("💰 የወር ቁጠባ")
+    savings_df = pd.DataFrame({"ወር": MONTHS, "ቁጠባ (ብር)": [safe_float(my_member.get(m, 0)) for m in MONTHS]})
+    st.dataframe(savings_df, use_container_width=True, hide_index=True)
+
+    st.subheader("💳 የብድር መረጃ")
+    loan_df = pd.DataFrame([{
+        "የተበደረ": f"{money(my_member.get('የተበደረ ብር', 0))} ብር",
+        "የብድር ጊዜ": f"{safe_int(my_member.get('የብድር ጊዜ (ወር)', 0))} ወር",
+        "ወርሃዊ ክፍያ": f"{money(my_member.get('የብድር ወርሃዊ ክፍያ (ብር)', 0))} ብር",
+        "ቀሪ ዋና ብድር": f"{money(my_member.get('የቀረው ዋና ብድር (ብር)', 0))} ብር",
+        "ቀሪ ዕዳ": f"{money(my_member.get('የቀረው ዕዳ (ብር)', 0))} ብር",
+    }])
+    st.dataframe(loan_df, use_container_width=True, hide_index=True)
+
+    st.subheader("📅 የእኔ የብድር ክፍያ ታሪክ")
+    my_history = [
+        h for h in payment_history
+        if str(safe_int(h.get("የአባል ቁጥር", 0))) == linked_number
+    ]
+    if my_history:
+        st.dataframe(pd.DataFrame(my_history).iloc[::-1], use_container_width=True, hide_index=True)
+    else:
+        st.info("እስካሁን የብድር ክፍያ ታሪክ የለም።")
 
 
 # ============================================================
@@ -2634,6 +2710,17 @@ elif page == "👥 ተጠቃሚዎች አስተዳደር":
         new_username = st.text_input("Username")
         new_password = st.text_input("Password", type="password")
         new_role = st.selectbox("Role", ALL_ROLES[1:])
+        member_options = [
+            "-- አባል አልተመረጠም --"
+        ] + [
+            f"{safe_int(m.get('የአባል ቁጥር'))} - {m.get('ስም', '')}"
+            for m in members
+        ]
+        new_member_selection = st.selectbox(
+            "የአባል መለያ (Member ከሆነ ብቻ)",
+            member_options,
+            disabled=(new_role != "Member")
+        )
         create_user_submit = st.form_submit_button(
             "➕ ተጠቃሚ ፍጠር",
             type="primary"
@@ -2650,11 +2737,27 @@ elif page == "👥 ተጠቃሚዎች አስተዳደር":
         elif find_user(users, new_username):
             st.error("ይህ Username አስቀድሞ አለ።")
 
+        elif new_role == "Member" and new_member_selection.startswith("--"):
+            st.error("Member account ለመፍጠር አባል ይምረጡ።")
+
+        elif new_role == "Member" and any(
+            str(u.get("member_number", "")).strip() == new_member_selection.split(" - ", 1)[0].strip()
+            and str(u.get("role", "")) == "Member"
+            for u in users
+        ):
+            st.error("ይህ አባል አስቀድሞ Member account አለው።")
+
         else:
+            linked_member_number = (
+                new_member_selection.split(" - ", 1)[0].strip()
+                if new_role == "Member" and not new_member_selection.startswith("--")
+                else ""
+            )
             users.append({
                 "username": new_username.strip(),
                 "password_hash": hash_password(new_password),
                 "role": new_role,
+                "member_number": linked_member_number,
                 "active": "Yes",
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             })
@@ -2679,6 +2782,7 @@ elif page == "👥 ተጠቃሚዎች አስተዳደር":
         {
             "Username": u.get("username", ""),
             "Role": u.get("role", ""),
+            "Member No.": u.get("member_number", ""),
             "Active": u.get("active", ""),
             "Created": u.get("created_at", ""),
         }
@@ -2718,6 +2822,23 @@ elif page == "👥 ተጠቃሚዎች አስተዳደር":
                 "ተጠቃሚው Active ነው",
                 value=str(managed_user.get("active", "Yes")).lower() in ("yes", "true", "1")
             )
+            managed_member_options = [
+                "-- አባል አልተመረጠም --"
+            ] + [
+                f"{safe_int(m.get('የአባል ቁጥር'))} - {m.get('ስም', '')}"
+                for m in members
+            ]
+            current_member_no = str(managed_user.get("member_number", "") or "").strip()
+            current_member_label = next(
+                (x for x in managed_member_options if x.startswith(current_member_no + " - ")),
+                managed_member_options[0]
+            )
+            managed_member_selection = st.selectbox(
+                "የተገናኘ አባል (Member ከሆነ)",
+                managed_member_options,
+                index=managed_member_options.index(current_member_label) if current_member_label in managed_member_options else 0,
+                disabled=(managed_role != "Member")
+            )
             manage_user_submit = st.form_submit_button(
                 "💾 Role / Active አስቀምጥ"
             )
@@ -2746,6 +2867,11 @@ elif page == "👥 ተጠቃሚዎች አስተዳደር":
                 old_role = managed_user.get("role", "")
                 old_active = managed_user.get("active", "")
                 managed_user["role"] = managed_role
+                managed_user["member_number"] = (
+                    managed_member_selection.split(" - ", 1)[0].strip()
+                    if managed_role == "Member" and not managed_member_selection.startswith("--")
+                    else ""
+                )
                 managed_user["active"] = "Yes" if managed_active else "No"
 
                 log_action(

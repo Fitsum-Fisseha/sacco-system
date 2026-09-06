@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import shutil
 import base64
 import math
 from io import StringIO, BytesIO
@@ -481,6 +482,109 @@ def apply_loan_payment(member, payment_amount):
 
 
 # ============================================================
+# PHASE 2 - BACKUP & RECEIPT HELPERS
+# ============================================================
+
+def create_database_backup():
+    """Create a timestamped backup of the current Excel database."""
+    if not os.path.exists(DB_FILE):
+        return None
+
+    backup_dir = "sacco_backups"
+    os.makedirs(backup_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.join(
+        backup_dir,
+        f"sacco_database_backup_{timestamp}.xlsx"
+    )
+
+    shutil.copy2(DB_FILE, backup_file)
+    return backup_file
+
+
+def cleanup_old_backups(max_backups=30):
+    """Keep the newest backup files only."""
+    backup_dir = "sacco_backups"
+    if not os.path.isdir(backup_dir):
+        return
+
+    files = [
+        os.path.join(backup_dir, f)
+        for f in os.listdir(backup_dir)
+        if f.lower().endswith(".xlsx")
+    ]
+
+    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+    for old_file in files[max_backups:]:
+        try:
+            os.remove(old_file)
+        except OSError:
+            pass
+
+
+def make_receipt_number(payment_history):
+    """Generate a simple sequential receipt number."""
+    highest = 0
+    for item in payment_history:
+        value = str(item.get("ደረሰኝ ቁጥር", "")).strip()
+        if value.startswith("RC-"):
+            try:
+                highest = max(highest, int(value.split("-")[-1]))
+            except ValueError:
+                pass
+    return f"RC-{highest + 1:06d}"
+
+
+def generate_receipt_html(receipt):
+    """Create a clean printable HTML receipt."""
+    def esc(value):
+        return (str(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+    return f"""<!DOCTYPE html>
+<html lang="am">
+<head>
+<meta charset="UTF-8">
+<title>Receipt {esc(receipt.get('ደረሰኝ ቁጥር',''))}</title>
+<style>
+body {{ font-family: Arial, 'Noto Sans Ethiopic', sans-serif; margin: 40px; }}
+.receipt {{ max-width: 720px; margin: auto; border: 1px solid #ccc; padding: 30px; }}
+h1 {{ text-align: center; margin-bottom: 5px; }}
+.sub {{ text-align: center; color: #555; margin-bottom: 25px; }}
+table {{ width: 100%; border-collapse: collapse; }}
+td {{ padding: 10px; border-bottom: 1px solid #eee; }}
+td:first-child {{ font-weight: bold; width: 45%; }}
+.total {{ font-size: 20px; font-weight: bold; }}
+.footer {{ margin-top: 30px; text-align: center; color: #666; }}
+</style>
+</head>
+<body>
+<div class="receipt">
+<h1>🏦 ተስፋ የገንዘብ ቁጠባና ብድር ማህበር</h1>
+<div class="sub">የብድር ክፍያ ደረሰኝ</div>
+<table>
+<tr><td>ደረሰኝ ቁጥር</td><td>{esc(receipt.get('ደረሰኝ ቁጥር',''))}</td></tr>
+<tr><td>ቀን</td><td>{esc(receipt.get('ቀን',''))}</td></tr>
+<tr><td>የአባል ቁጥር</td><td>{esc(receipt.get('የአባል ቁጥር',''))}</td></tr>
+<tr><td>ስም</td><td>{esc(receipt.get('ስም',''))}</td></tr>
+<tr><td>ብሔራዊ መታወቂያ</td><td>{esc(format_national_id(receipt.get('ብሔራዊ መታወቂያ','')))}</td></tr>
+<tr><td>የተከፈለ ጠቅላላ</td><td class="total">{money(receipt.get('የተከፈለ ጠቅላላ',0))} ብር</td></tr>
+<tr><td>ወለድ</td><td>{money(receipt.get('ወለድ',0))} ብር</td></tr>
+<tr><td>ዋና ብድር</td><td>{money(receipt.get('ዋና ብድር',0))} ብር</td></tr>
+<tr><td>የቀረ ዋና ብድር</td><td>{money(receipt.get('የቀረ ዋና ብድር',0))} ብር</td></tr>
+</table>
+<div class="footer">እናመሰግናለን።</div>
+</div>
+</body>
+</html>"""
+
+
+# ============================================================
 # EXCEL SAVE
 # ============================================================
 
@@ -488,6 +592,15 @@ def save_data_to_excel(members, payment_history=None):
 
     if payment_history is None:
         payment_history = []
+
+    # Phase 2 safety: backup the existing database before replacing it.
+    if os.path.exists(DB_FILE):
+        try:
+            create_database_backup()
+            cleanup_old_backups(max_backups=30)
+        except Exception:
+            # Never block normal saving if backup creation fails.
+            pass
 
     member_df = pd.DataFrame(members)
 
@@ -859,6 +972,7 @@ st.sidebar.title("📋 ምናሌ")
 page = st.sidebar.radio(
     "ገጽ ይምረጡ",
     [
+        "🏠 ዋና ዳሽቦርድ",
         "👤 አባል መመዝገቢያ",
         "💰 የወር ቁጠባ ማስገቢያ",
         "💵 የብድር አገልግሎት",
@@ -867,6 +981,87 @@ page = st.sidebar.radio(
         "✏️ የአባላት መረጃ ማስተካከያ"
     ]
 )
+
+st.sidebar.divider()
+
+if st.sidebar.button("💾 የዳታቤዝ Backup ፍጠር"):
+    if os.path.exists(DB_FILE):
+        try:
+            backup_file = create_database_backup()
+            cleanup_old_backups(max_backups=30)
+            st.sidebar.success("Backup ተፈጥሯል።")
+        except Exception as e:
+            st.sidebar.error(f"Backup ማድረግ አልተቻለም፦ {e}")
+    else:
+        st.sidebar.warning("እስካሁን Excel database የለም።")
+
+
+# ============================================================
+# 0. DASHBOARD
+# ============================================================
+
+if page == "🏠 ዋና ዳሽቦርድ":
+
+    st.header("🏠 ዋና ዳሽቦርድ")
+
+    total_members = len(members)
+    total_savings_all = sum(total_savings(m) for m in members)
+    total_loans = sum(safe_float(m.get("የተበደረ ብር", 0)) for m in members)
+    total_remaining = sum(safe_float(m.get("የቀረው ዕዳ (ብር)", 0)) for m in members)
+    total_interest = sum(safe_float(m.get("የተከፈለ ወለድ (ብር)", 0)) for m in members)
+    total_loan_fees = sum(safe_float(m.get("10% የብድር ክፍያ (ብር)", 0)) for m in members)
+    total_registration = sum(safe_float(m.get("የመመዝገቢያ ክፍያ (ብር)", 0)) for m in members)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("👥 አባላት", total_members)
+    c2.metric("💰 ጠቅላላ ቁጠባ", f"{money(total_savings_all)} ብር")
+    c3.metric("💵 የተበደረ", f"{money(total_loans)} ብር")
+    c4.metric("📌 ቀሪ ዕዳ", f"{money(total_remaining)} ብር")
+
+    st.divider()
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("📈 የተከፈለ ወለድ", f"{money(total_interest)} ብር")
+    d2.metric("💳 10% የብድር ክፍያ", f"{money(total_loan_fees)} ብር")
+    d3.metric("🧾 መመዝገቢያ", f"{money(total_registration)} ብር")
+    d4.metric("💼 ጠቅላላ ገቢ", f"{money(total_interest + total_loan_fees + total_registration)} ብር")
+
+    st.divider()
+
+    st.subheader("📊 የወር ቁጠባ ሁኔታ")
+    monthly_totals = pd.DataFrame({
+        "ወር": MONTHS,
+        "ጠቅላላ ቁጠባ": [
+            sum(safe_float(m.get(month, 0)) for m in members)
+            for month in MONTHS
+        ]
+    })
+    st.bar_chart(monthly_totals.set_index("ወር"))
+
+    st.subheader("💳 የብድር ሁኔታ")
+    loan_status = pd.DataFrame({
+        "ሁኔታ": ["የተበደረ ዋና ብድር", "ቀሪ ዋና ብድር"],
+        "መጠን": [
+            total_loans,
+            sum(safe_float(m.get("የቀረው ዋና ብድር (ብር)", 0)) for m in members)
+        ]
+    })
+    st.bar_chart(loan_status.set_index("ሁኔታ"))
+
+    st.subheader("🕒 የቅርብ ጊዜ የብድር ክፍያዎች")
+    if payment_history:
+        recent_df = pd.DataFrame(payment_history).tail(10).iloc[::-1]
+        st.dataframe(recent_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("እስካሁን የብድር ክፍያ የለም።")
+
+    excel_data = create_excel_download(members, payment_history)
+    st.download_button(
+        "📥 የአሁኑን Excel ዳታ አውርድ",
+        data=excel_data,
+        file_name="sacco_database.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 
 # ============================================================
@@ -1428,6 +1623,20 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
 
     st.header("📅 የብድር ክፍያ መመዝገቢያ")
 
+    if "last_receipt" in st.session_state:
+        last_receipt = st.session_state.last_receipt
+        st.success(
+            f"✅ የመጨረሻ ደረሰኝ: {last_receipt.get('ደረሰኝ ቁጥር', '')}"
+        )
+        receipt_html = generate_receipt_html(last_receipt)
+        st.download_button(
+            "🧾 ደረሰኝ አውርድ / Print",
+            data=receipt_html.encode("utf-8"),
+            file_name=f"{last_receipt.get('ደረሰኝ ቁጥር','receipt')}.html",
+            mime="text/html",
+            key="last_receipt_download"
+        )
+
     member, selected_number = member_search_selector(
         members,
         key="repayment_member"
@@ -1538,12 +1747,19 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
 
                 if result["success"]:
 
+                    receipt_number = make_receipt_number(payment_history)
+                    payment_time = datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+
                     payment_history.append({
+                        "ደረሰኝ ቁጥር": receipt_number,
                         "የአባል ቁጥር": selected_number,
                         "ስም": member["ስም"],
-                        "ቀን": datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
+                        "ብሔራዊ መታወቂያ": clean_national_id(
+                            member.get("ብሔራዊ መታወቂያ", "")
                         ),
+                        "ቀን": payment_time,
                         "የተከፈለ ጠቅላላ": result["payment"],
                         "ወለድ": result["interest"],
                         "ዋና ብድር": result["principal"],
@@ -1563,6 +1779,7 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
 
                     st.session_state.members = members
                     st.session_state.payment_history = payment_history
+                    st.session_state.last_receipt = payment_history[-1].copy()
 
                     st.success(
                         f"ክፍያው ተመዝግቧል። "
@@ -1752,6 +1969,10 @@ elif page == "📊 ጠቅላላ ሪፖርት":
                 "ስም", ""
             ),
 
+            "ብሔራዊ መታወቂያ": format_national_id(
+                member.get("ብሔራዊ መታወቂያ", "")
+            ),
+
             "ጠቅላላ ቁጠባ": total_savings(
                 member
             ),
@@ -1820,8 +2041,8 @@ elif page == "📊 ጠቅላላ ሪፖርት":
     # --------------------------------------------------------
 
     filter_text = st.text_input(
-        "🔎 አባል በስም ወይም በአባል ቁጥር ፈልግ",
-        placeholder="ስም ወይም የአባል ቁጥር ያስገቡ..."
+        "🔎 አባል በስም፣ በአባል ቁጥር ወይም National ID ፈልግ",
+        placeholder="ስም፣ አባል ቁጥር ወይም 0000 0000 0001 ያስገቡ..."
     )
 
     if filter_text.strip():
@@ -1835,6 +2056,10 @@ elif page == "📊 ጠቅላላ ሪፖርት":
             |
             report_df["የአባል ቁጥር"].astype(str).str.contains(
                 search_text, na=False
+            )
+            |
+            report_df["ብሔራዊ መታወቂያ"].astype(str).str.replace(" ", "", regex=False).str.contains(
+                clean_national_id(search_text), na=False
             )
         ]
 

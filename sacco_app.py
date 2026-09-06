@@ -699,6 +699,86 @@ def national_id_exists(
 
 
 # ============================================================
+# MEMBER SEARCH / SELECTION
+# ============================================================
+
+def member_search_selector(members, label="አባል ይምረጡ", key="member_search"):
+    """Search members by name, member number, or National ID."""
+    search_text = st.text_input(
+        "🔎 አባል ፈልግ (ስም / አባል ቁጥር / National ID)",
+        placeholder="ለምሳሌ፦ 25 ወይም አበበ ወይም 0000 0000 0025",
+        key=f"{key}_search"
+    )
+
+    search_text = clean_national_id(search_text).lower()
+
+    filtered = []
+    for member in members:
+        name = str(member.get("ስም", ""))
+        number = str(safe_int(member.get("የአባል ቁጥር", 0)))
+        national_id = clean_national_id(
+            member.get("ብሔራዊ መታወቂያ", "")
+        )
+
+        if (
+            not search_text
+            or search_text in name.lower()
+            or search_text in number
+            or search_text in national_id.lower()
+        ):
+            filtered.append(member)
+
+    if not filtered:
+        st.warning("🔎 የፈለጉት አባል አልተገኘም።")
+        return None, None
+
+    options = [
+        f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")} - {format_national_id(m.get("ብሔራዊ መታወቂያ", ""))}'
+        for m in filtered
+    ]
+
+    selected = st.selectbox(
+        label,
+        options,
+        key=f"{key}_select"
+    )
+
+    selected_number = int(selected.split(" - ")[0])
+    selected_member = next(
+        m for m in filtered
+        if safe_int(m.get("የአባል ቁጥር")) == selected_number
+    )
+
+    return selected_member, selected_number
+
+
+def recent_payment_duplicate(payment_history, member_number, amount, window_seconds=120):
+    """Detect an accidental repeated loan payment within a short time window."""
+    now = datetime.now()
+    amount = safe_float(amount)
+
+    for history in reversed(payment_history):
+        if safe_int(history.get("የአባል ቁጥር", 0)) != safe_int(member_number):
+            continue
+
+        if abs(safe_float(history.get("የተከፈለ ጠቅላላ", 0)) - amount) > 0.01:
+            continue
+
+        try:
+            payment_time = datetime.strptime(
+                str(history.get("ቀን", "")),
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except (ValueError, TypeError):
+            continue
+
+        if 0 <= (now - payment_time).total_seconds() <= window_seconds:
+            return True
+
+    return False
+
+
+# ============================================================
 # TOTAL SAVINGS
 # ============================================================
 
@@ -918,31 +998,12 @@ elif page == "💰 የወር ቁጠባ ማስገቢያ":
 
     st.header("💰 የወር ቁጠባ ማስገቢያ")
 
-    member_names = [
-        f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")}'
-        for m in members
-    ]
+    member, selected_number = member_search_selector(
+        members,
+        key="savings_member"
+    )
 
-    if not member_names:
-
-        st.warning("አባላት የሉም።")
-
-    else:
-
-        selected = st.selectbox(
-            "አባል ይምረጡ",
-            member_names
-        )
-
-        selected_number = int(
-            selected.split(" - ")[0]
-        )
-
-        member = next(
-            m for m in members
-            if safe_int(m.get("የአባል ቁጥር"))
-            == selected_number
-        )
+    if member is not None:
 
         col1, col2, col3 = st.columns(3)
 
@@ -998,6 +1059,30 @@ elif page == "💰 የወር ቁጠባ ማስገቢያ":
             step=50.0
         )
 
+        allow_savings_save = True
+        if existing_amount > 0 and mode.startswith("➕"):
+            allow_savings_save = st.checkbox(
+                f"⚠️ {month} ላይ ቀድሞ {money(existing_amount)} ብር አለ። አዲሱን ቁጠባ በዚህ ወር ላይ ለመጨመር አረጋግጣለሁ።",
+                key=f"confirm_savings_{selected_number}_{month}"
+            )
+
+        savings_payment_duplicate = False
+        confirm_savings_payment_duplicate = True
+        if safe_float(member.get("የቀረው ዕዳ (ብር)", 0)) > 0 and amount > 0:
+            savings_payment_duplicate = recent_payment_duplicate(
+                payment_history,
+                selected_number,
+                amount
+            )
+            if savings_payment_duplicate:
+                st.warning(
+                    "⚠️ ይህ አባል በቅርቡ ተመሳሳይ የብድር ክፍያ መጠን ከፍሏል።"
+                )
+                confirm_savings_payment_duplicate = st.checkbox(
+                    "እርግጠኛ ነኝ፤ ይህን ክፍያ እንደገና መመዝገብ እፈልጋለሁ።",
+                    key=f"confirm_savings_payment_duplicate_{selected_number}_{amount}"
+                )
+
         if st.button(
             "💾 ቁጠባ መዝግብ",
             type="primary"
@@ -1007,6 +1092,18 @@ elif page == "💰 የወር ቁጠባ ማስገቢያ":
 
                 st.error(
                     "የቁጠባ መጠን ከ0 በላይ ይሁን።"
+                )
+
+            elif not allow_savings_save:
+
+                st.warning(
+                    "አዲስ ቁጠባ ለመጨመር እባክዎ የማረጋገጫ ሳጥኑን ይምረጡ።"
+                )
+
+            elif savings_payment_duplicate and not confirm_savings_payment_duplicate:
+
+                st.error(
+                    "የተደጋጋሚ የብድር ክፍያ ለመከላከል እባክዎ ክፍያውን ያረጋግጡ።"
                 )
 
             else:
@@ -1155,216 +1252,189 @@ elif page == "💵 የብድር አገልግሎት":
 
     st.header("💵 የብድር አገልግሎት")
 
-    member_names = [
-        f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")}'
-        for m in members
-    ]
-
-    selected = st.selectbox(
-        "አባል ይምረጡ",
-        member_names,
+    member, selected_number = member_search_selector(
+        members,
         key="loan_member"
     )
 
-    selected_number = int(
-        selected.split(" - ")[0]
-    )
+    if member is not None:
 
-    member = next(
-        m for m in members
-        if safe_int(m.get("የአባል ቁጥር"))
-        == selected_number
-    )
+        savings = total_savings(member)
 
-    savings = total_savings(member)
-
-    current_debt = safe_float(
-        member.get("የቀረው ዕዳ (ብር)", 0)
-    )
-
-    max_loan = savings * 4
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "ጠቅላላ ቁጠባ",
-            f"{money(savings)} ብር"
+        current_debt = safe_float(
+            member.get("የቀረው ዕዳ (ብር)", 0)
         )
 
-    with col2:
-        st.metric(
-            "ከፍተኛ ብድር",
-            f"{money(max_loan)} ብር"
-        )
+        max_loan = savings * 4
 
-    with col3:
-        st.metric(
-            "የቀረ ብድር",
-            f"{money(current_debt)} ብር"
-        )
+        col1, col2, col3 = st.columns(3)
 
-    if current_debt > 0:
-
-        st.warning(
-            "⚠️ ይህ አባል አሁንም ያልተከፈለ ብድር ስላለበት "
-            "አዲስ ብድር መውሰድ አይችልም።"
-        )
-
-    else:
-
-        loan_amount = st.number_input(
-            "የብድር መጠን (ብር)",
-            min_value=0.0,
-            max_value=float(max_loan),
-            step=100.0
-        )
-
-        term = st.selectbox(
-            "የብድር ጊዜ",
-            LOAN_TERMS,
-            format_func=lambda x: f"{x} ወር"
-        )
-
-        monthly_payment = calculate_monthly_payment(
-            loan_amount,
-            term
-        )
-
-        loan_fee = loan_amount * LOAN_FEE_RATE
-        cash_given = loan_amount - loan_fee
-
-        st.subheader("🧮 የብድር ስሌት")
-
-        calc1, calc2, calc3, calc4 = st.columns(4)
-
-        with calc1:
+        with col1:
             st.metric(
-                "የብድር መጠን",
-                f"{money(loan_amount)} ብር"
+                "ጠቅላላ ቁጠባ",
+                f"{money(savings)} ብር"
             )
 
-        with calc2:
+        with col2:
             st.metric(
-                "10% የብድር ክፍያ",
-                f"{money(loan_fee)} ብር"
+                "ከፍተኛ ብድር",
+                f"{money(max_loan)} ብር"
             )
 
-        with calc3:
+        with col3:
             st.metric(
-                "በእጅ የሚሰጠው 90%",
-                f"{money(cash_given)} ብር"
+                "የቀረ ብድር",
+                f"{money(current_debt)} ብር"
             )
 
-        with calc4:
-            st.metric(
-                "የወር ክፍያ",
-                f"{money(monthly_payment)} ብር"
+        if current_debt > 0:
+
+            st.warning(
+                "⚠️ ይህ አባል አሁንም ያልተከፈለ ብድር ስላለበት "
+                "አዲስ ብድር መውሰድ አይችልም።"
             )
 
-        st.info(
-            "ℹ️ የ10% ብር ከብድሩ ውስጥ የሚቆረጥ የብድር ክፍያ ነው። "
-            "የአባሉ ዕዳ ግን የተበደረው ሙሉ መጠን ነው።"
-        )
+        else:
 
-        if st.button(
-            "💵 ብድር መፍቀድ",
-            type="primary"
-        ):
+            loan_amount = st.number_input(
+                "የብድር መጠን (ብር)",
+                min_value=0.0,
+                max_value=float(max_loan),
+                step=100.0
+            )
 
-            if loan_amount <= 0:
+            term = st.selectbox(
+                "የብድር ጊዜ",
+                LOAN_TERMS,
+                format_func=lambda x: f"{x} ወር"
+            )
 
-                st.error(
-                    "የብድር መጠን ከ0 በላይ ይሁን።"
+            monthly_payment = calculate_monthly_payment(
+                loan_amount,
+                term
+            )
+
+            loan_fee = loan_amount * LOAN_FEE_RATE
+            cash_given = loan_amount - loan_fee
+
+            st.subheader("🧮 የብድር ስሌት")
+
+            calc1, calc2, calc3, calc4 = st.columns(4)
+
+            with calc1:
+                st.metric(
+                    "የብድር መጠን",
+                    f"{money(loan_amount)} ብር"
                 )
 
-            elif loan_amount > max_loan:
-
-                st.error(
-                    f"ከፍተኛው ብድር {money(max_loan)} ብር ነው።"
+            with calc2:
+                st.metric(
+                    "10% የብድር ክፍያ",
+                    f"{money(loan_fee)} ብር"
                 )
 
-            else:
-
-                member["የተበደረ ብር"] = loan_amount
-
-                member["10% የብድር ክፍያ (ብር)"] = (
-                    loan_fee
+            with calc3:
+                st.metric(
+                    "በእጅ የሚሰጠው 90%",
+                    f"{money(cash_given)} ብር"
                 )
 
-                member["በእጅ የተሰጠ 90% (ብር)"] = (
-                    cash_given
+            with calc4:
+                st.metric(
+                    "የወር ክፍያ",
+                    f"{money(monthly_payment)} ብር"
                 )
 
-                member["የብድር ጊዜ (ወር)"] = term
+            st.info(
+                "ℹ️ የ10% ብር ከብድሩ ውስጥ የሚቆረጥ የብድር ክፍያ ነው። "
+                "የአባሉ ዕዳ ግን የተበደረው ሙሉ መጠን ነው።"
+            )
 
-                member["የብድር ወርሃዊ ክፍያ (ብር)"] = (
-                    monthly_payment
-                )
+            if st.button(
+                "💵 ብድር መፍቀድ",
+                type="primary"
+            ):
 
-                member["የቀረው ዋና ብድር (ብር)"] = (
-                    loan_amount
-                )
+                if loan_amount <= 0:
 
-                member["የቀረው ዕዳ (ብር)"] = (
-                    loan_amount
-                )
+                    st.error(
+                        "የብድር መጠን ከ0 በላይ ይሁን።"
+                    )
 
-                member["የተከፈለ ወለድ (ብር)"] = 0.0
-                member["የተከፈለ ዋና ብድር (ብር)"] = 0.0
+                elif loan_amount > max_loan:
 
-                member["የተበደረበት ቀን"] = (
-                    datetime.now().strftime("%Y-%m-%d")
-                )
+                    st.error(
+                        f"ከፍተኛው ብድር {money(max_loan)} ብር ነው።"
+                    )
 
-                save_data_to_excel(
-                    members,
-                    payment_history
-                )
+                else:
 
-                st.session_state.members = members
+                    member["የተበደረ ብር"] = loan_amount
 
-                st.success(
-                    f"{member['ስም']} {money(loan_amount)} ብር ብድር "
-                    f"ተፈቅዶለታል።"
-                )
+                    member["10% የብድር ክፍያ (ብር)"] = (
+                        loan_fee
+                    )
 
-                st.info(
-                    f"10% የብድር ክፍያ = {money(loan_fee)} ብር | "
-                    f"በእጅ የተሰጠ = {money(cash_given)} ብር"
-                )
+                    member["በእጅ የተሰጠ 90% (ብር)"] = (
+                        cash_given
+                    )
 
-                st.rerun()
+                    member["የብድር ጊዜ (ወር)"] = term
+
+                    member["የብድር ወርሃዊ ክፍያ (ብር)"] = (
+                        monthly_payment
+                    )
+
+                    member["የቀረው ዋና ብድር (ብር)"] = (
+                        loan_amount
+                    )
+
+                    member["የቀረው ዕዳ (ብር)"] = (
+                        loan_amount
+                    )
+
+                    member["የተከፈለ ወለድ (ብር)"] = 0.0
+                    member["የተከፈለ ዋና ብድር (ብር)"] = 0.0
+
+                    member["የተበደረበት ቀን"] = (
+                        datetime.now().strftime("%Y-%m-%d")
+                    )
+
+                    save_data_to_excel(
+                        members,
+                        payment_history
+                    )
+
+                    st.session_state.members = members
+
+                    st.success(
+                        f"{member['ስም']} {money(loan_amount)} ብር ብድር "
+                        f"ተፈቅዶለታል።"
+                    )
+
+                    st.info(
+                        f"10% የብድር ክፍያ = {money(loan_fee)} ብር | "
+                        f"በእጅ የተሰጠ = {money(cash_given)} ብር"
+                    )
+
+                    st.rerun()
 
 
-# ============================================================
-# 4. LOAN REPAYMENT
-# ============================================================
+    # ============================================================
+    # 4. LOAN REPAYMENT
+    # ============================================================
 
 elif page == "📅 የብድር ክፍያ መመዝገቢያ":
 
     st.header("📅 የብድር ክፍያ መመዝገቢያ")
 
-    member_names = [
-        f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")}'
-        for m in members
-    ]
-
-    selected = st.selectbox(
-        "አባል ይምረጡ",
-        member_names,
+    member, selected_number = member_search_selector(
+        members,
         key="repayment_member"
     )
 
-    selected_number = int(
-        selected.split(" - ")[0]
-    )
-
-    member = next(
-        m for m in members
-        if safe_int(m.get("የአባል ቁጥር"))
-        == selected_number
-    )
+    if member is None:
+        st.stop()
 
     remaining = safe_float(
         member.get("የቀረው ዋና ብድር (ብር)", 0)
@@ -1433,10 +1503,33 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
                 f"{money(estimated_principal)} ብር"
             )
 
+            duplicate_payment_warning = recent_payment_duplicate(
+                payment_history,
+                selected_number,
+                payment_amount
+            )
+
+            confirm_repeat_payment = True
+            if duplicate_payment_warning:
+                st.warning(
+                    "⚠️ ይህ አባል በቅርቡ ተመሳሳይ የክፍያ መጠን ከፍሏል። "
+                    "ይህ የሁለት ጊዜ መመዝገብ ሊሆን ስለሚችል እባክዎ ያረጋግጡ።"
+                )
+                confirm_repeat_payment = st.checkbox(
+                    "እርግጠኛ ነኝ፤ ይህን ክፍያ እንደገና መመዝገብ እፈልጋለሁ።",
+                    key=f"confirm_repeat_payment_{selected_number}_{payment_amount}"
+                )
+
             if st.button(
                 "💾 ክፍያ መዝግብ",
                 type="primary"
             ):
+
+                if duplicate_payment_warning and not confirm_repeat_payment:
+                    st.error(
+                        "የተደጋጋሚ ክፍያ ለመከላከል እባክዎ ክፍያውን ያረጋግጡ።"
+                    )
+                    st.stop()
 
                 result = apply_loan_payment(
                     member,
@@ -1809,36 +1902,18 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
 
     st.header("✏️ የአባላት መረጃ ማስተካከያ")
 
-    member_names = [
-        f'{safe_int(m.get("የአባል ቁጥር"))} - {m.get("ስም", "")}'
-        for m in members
-    ]
+    member, selected_number = member_search_selector(
+        members,
+        key="edit_member"
+    )
 
-    if not member_names:
-
-        st.warning("አባላት የሉም።")
-
-    else:
-
-        selected = st.selectbox(
-            "አባል ይምረጡ",
-            member_names,
-            key="edit_member"
-        )
-
-        selected_number = int(
-            selected.split(" - ")[0]
-        )
+    if member is not None:
 
         member_index = next(
             i
             for i, m in enumerate(members)
-            if safe_int(
-                m.get("የአባል ቁጥር")
-            ) == selected_number
+            if safe_int(m.get("የአባል ቁጥር")) == selected_number
         )
-
-        member = members[member_index]
 
         col1, col2 = st.columns(2)
 
@@ -1976,7 +2051,13 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
         )
 
         confirm_delete = st.checkbox(
-            "ይህን አባል መሰረዝ እፈልጋለሁ"
+            "⚠️ ይህን አባል መሰረዝ እፈልጋለሁ"
+        )
+
+        delete_member_number = st.text_input(
+            f"ለማረጋገጥ የአባል ቁጥር {selected_number} ያስገቡ",
+            placeholder=str(selected_number),
+            key=f"delete_confirm_number_{selected_number}"
         )
 
         if confirm_delete:
@@ -1985,6 +2066,12 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                 "🗑️ አባል ሰርዝ",
                 type="secondary"
             ):
+
+                if delete_member_number.strip() != str(selected_number):
+                    st.error(
+                        f"ለማረጋገጥ የአባል ቁጥር {selected_number} በትክክል ያስገቡ።"
+                    )
+                    st.stop()
 
                 members.pop(member_index)
 

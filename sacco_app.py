@@ -6,6 +6,8 @@ import base64
 import math
 from io import StringIO, BytesIO
 from datetime import datetime
+import hashlib
+import secrets
 
 # ============================================================
 # CONFIGURATION
@@ -35,13 +37,50 @@ MONTHS = [
     "ነሐሴ"
 ]
 
-SEED_VERSION = "fixed136-v1"
+SEED_VERSION = "phase3-auth-v1"
 
 REGISTRATION_FEE = 500.0
 LOAN_FEE_RATE = 0.10
 INTEREST_RATE = 0.02
 
 LOAN_TERMS = [3, 6, 12, 24, 36]
+
+# ============================================================
+# PHASE 3 - USERS, ROLES & AUDIT
+# ============================================================
+
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin123"
+
+ROLE_PERMISSIONS = {
+    "Admin": {
+        "🏠 ዋና ዳሽቦርድ",
+        "👤 አባል መመዝገቢያ",
+        "💰 የወር ቁጠባ ማስገቢያ",
+        "💵 የብድር አገልግሎት",
+        "📅 የብድር ክፍያ መመዝገቢያ",
+        "📊 ጠቅላላ ሪፖርት",
+        "✏️ የአባላት መረጃ ማስተካከያ",
+        "👥 ተጠቃሚዎች አስተዳደር",
+    },
+    "Savings": {
+        "🏠 ዋና ዳሽቦርድ",
+        "💰 የወር ቁጠባ ማስገቢያ",
+        "📊 ጠቅላላ ሪፖርት",
+    },
+    "Loan": {
+        "🏠 ዋና ዳሽቦርድ",
+        "💵 የብድር አገልግሎት",
+        "📅 የብድር ክፍያ መመዝገቢያ",
+        "📊 ጠቅላላ ሪፖርት",
+    },
+    "Reports": {
+        "🏠 ዋና ዳሽቦርድ",
+        "📊 ጠቅላላ ሪፖርት",
+    },
+}
+
+ALL_ROLES = list(ROLE_PERMISSIONS.keys())
 
 
 # ============================================================
@@ -322,6 +361,76 @@ def normalize_member(member):
 
 
 # ============================================================
+# PHASE 3 - AUTHENTICATION HELPERS
+# ============================================================
+
+def hash_password(password, salt=None):
+    """Hash a password with PBKDF2-HMAC-SHA256."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        str(password).encode("utf-8"),
+        salt.encode("utf-8"),
+        120000
+    ).hex()
+    return f"{salt}${digest}"
+
+
+def verify_password(password, stored_hash):
+    try:
+        salt, digest = str(stored_hash).split("$", 1)
+        check = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password).encode("utf-8"),
+            salt.encode("utf-8"),
+            120000
+        ).hex()
+        return secrets.compare_digest(check, digest)
+    except Exception:
+        return False
+
+
+def create_initial_users():
+    return [{
+        "username": DEFAULT_ADMIN_USERNAME,
+        "password_hash": hash_password(DEFAULT_ADMIN_PASSWORD),
+        "role": "Admin",
+        "active": "Yes",
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }]
+
+
+def user_can_access(page_name):
+    user = st.session_state.get("current_user")
+    if not user:
+        return False
+    return page_name in ROLE_PERMISSIONS.get(user.get("role"), set())
+
+
+def current_username():
+    user = st.session_state.get("current_user")
+    return str(user.get("username", "system")) if user else "system"
+
+
+def log_action(audit_log, action, details=""):
+    audit_log.append({
+        "ቀን": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ተጠቃሚ": current_username(),
+        "ተግባር": str(action),
+        "ዝርዝር": str(details),
+    })
+
+
+def find_user(users, username):
+    target = str(username or "").strip().lower()
+    return next(
+        (u for u in users if str(u.get("username", "")).strip().lower() == target),
+        None
+    )
+
+
+# ============================================================
 # INITIAL MEMBERS
 # ============================================================
 
@@ -588,10 +697,16 @@ td:first-child {{ font-weight: bold; width: 45%; }}
 # EXCEL SAVE
 # ============================================================
 
-def save_data_to_excel(members, payment_history=None):
+def save_data_to_excel(members, payment_history=None, users=None, audit_log=None):
 
     if payment_history is None:
         payment_history = []
+
+    if users is None:
+        users = st.session_state.get("users", create_initial_users())
+
+    if audit_log is None:
+        audit_log = st.session_state.get("audit_log", [])
 
     # Phase 2 safety: backup the existing database before replacing it.
     if os.path.exists(DB_FILE):
@@ -661,6 +776,18 @@ def save_data_to_excel(members, payment_history=None):
             index=False
         )
 
+        pd.DataFrame(users).to_excel(
+            writer,
+            sheet_name="ተጠቃሚዎች",
+            index=False
+        )
+
+        pd.DataFrame(audit_log).to_excel(
+            writer,
+            sheet_name="የስርዓት_ታሪክ",
+            index=False
+        )
+
 
 # ============================================================
 # EXCEL LOAD
@@ -673,12 +800,17 @@ def load_database():
         members = create_initial_members()
         payment_history = []
 
+        users = create_initial_users()
+        audit_log = []
+
         save_data_to_excel(
             members,
-            payment_history
+            payment_history,
+            users,
+            audit_log
         )
 
-        return members, payment_history
+        return members, payment_history, users, audit_log
 
     try:
 
@@ -767,7 +899,48 @@ def load_database():
                     payment_history
                 )
 
-        return members, payment_history
+        # -----------------------------
+        # Users
+        # -----------------------------
+        if "ተጠቃሚዎች" in excel.sheet_names:
+            users_df = pd.read_excel(
+                DB_FILE,
+                sheet_name="ተጠቃሚዎች"
+            )
+            users = users_df.fillna("").to_dict(orient="records")
+        else:
+            users = create_initial_users()
+
+        # Guarantee an active admin exists if the users sheet is empty.
+        if not users:
+            users = create_initial_users()
+
+        # -----------------------------
+        # Audit Trail
+        # -----------------------------
+        if "የስርዓት_ታሪክ" in excel.sheet_names:
+            audit_df = pd.read_excel(
+                DB_FILE,
+                sheet_name="የስርዓት_ታሪክ"
+            )
+            audit_log = audit_df.fillna("").to_dict(orient="records")
+        else:
+            audit_log = []
+
+        # If Phase 3 sheets did not exist, write them once while
+        # preserving all current members and payment history.
+        if (
+            "ተጠቃሚዎች" not in excel.sheet_names
+            or "የስርዓት_ታሪክ" not in excel.sheet_names
+        ):
+            save_data_to_excel(
+                members,
+                payment_history,
+                users,
+                audit_log
+            )
+
+        return members, payment_history, users, audit_log
 
     except Exception as e:
 
@@ -775,7 +948,7 @@ def load_database():
             f"Excel database ሲከፈት ችግር ተፈጥሯል፦ {e}"
         )
 
-        return create_initial_members(), []
+        return create_initial_members(), [], create_initial_users(), []
 
 
 # ============================================================
@@ -802,9 +975,9 @@ def national_id_exists(
         ):
             continue
 
-        if str(
+        if clean_national_id(
             member.get("ብሔራዊ መታወቂያ", "")
-        ).strip() == national_id:
+        ) == national_id:
 
             return True
 
@@ -823,7 +996,8 @@ def member_search_selector(members, label="አባል ይምረጡ", key="member_
         key=f"{key}_search"
     )
 
-    search_text = clean_national_id(search_text).lower()
+    search_text = str(search_text or "").strip().lower()
+    search_id = clean_national_id(search_text)
 
     filtered = []
     for member in members:
@@ -837,7 +1011,7 @@ def member_search_selector(members, label="አባል ይምረጡ", key="member_
             not search_text
             or search_text in name.lower()
             or search_text in number
-            or search_text in national_id.lower()
+            or search_id in national_id.lower()
         ):
             filtered.append(member)
 
@@ -942,14 +1116,20 @@ def create_excel_download(members, payment_history):
 
 if "members" not in st.session_state:
 
-    members, payment_history = load_database()
+    members, payment_history, users, audit_log = load_database()
 
     st.session_state.members = members
     st.session_state.payment_history = payment_history
+    st.session_state.users = users
+    st.session_state.audit_log = audit_log
+    st.session_state.authenticated = False
+    st.session_state.current_user = None
 
 
 members = st.session_state.members
 payment_history = st.session_state.payment_history
+users = st.session_state.users
+audit_log = st.session_state.audit_log
 
 
 # ============================================================
@@ -964,22 +1144,94 @@ st.caption(
 
 
 # ============================================================
+# PHASE 3 - LOGIN GATE
+# ============================================================
+
+if not st.session_state.get("authenticated", False):
+
+    st.title("🔐 የስርዓቱ መግቢያ")
+
+    with st.form("login_form"):
+        login_username = st.text_input("👤 Username")
+        login_password = st.text_input("🔑 Password", type="password")
+        login_submit = st.form_submit_button(
+            "➡️ ግባ",
+            type="primary"
+        )
+
+    if login_submit:
+        found_user = find_user(users, login_username)
+
+        if (
+            found_user
+            and str(found_user.get("active", "Yes")).lower() in ("yes", "true", "1")
+            and verify_password(login_password, found_user.get("password_hash", ""))
+        ):
+            st.session_state.authenticated = True
+            st.session_state.current_user = {
+                "username": str(found_user.get("username", "")),
+                "role": str(found_user.get("role", "Reports")),
+            }
+            log_action(
+                audit_log,
+                "LOGIN",
+                f"Username={found_user.get('username')} Role={found_user.get('role')}"
+            )
+            save_data_to_excel(members, payment_history, users, audit_log)
+            st.rerun()
+        else:
+            st.error("❌ Username ወይም Password ትክክል አይደለም።")
+
+    st.info(
+        f"መጀመሪያ ጊዜ ከሆነ፦ Username: `{DEFAULT_ADMIN_USERNAME}`  | "
+        f"Password: `{DEFAULT_ADMIN_PASSWORD}`"
+    )
+    st.stop()
+
+
+# ============================================================
+# CURRENT USER / LOGOUT
+# ============================================================
+
+current_user = st.session_state.get("current_user") or {}
+st.sidebar.success(
+    f"👤 {current_user.get('username', '')}\n\n"
+    f"🔐 Role: {current_user.get('role', '')}"
+)
+
+if st.sidebar.button("🚪 ውጣ"):
+    log_action(audit_log, "LOGOUT", f"Username={current_username()}")
+    save_data_to_excel(members, payment_history, users, audit_log)
+    st.session_state.authenticated = False
+    st.session_state.current_user = None
+    st.rerun()
+
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
 st.sidebar.title("📋 ምናሌ")
 
+ALL_PAGES = [
+    "🏠 ዋና ዳሽቦርድ",
+    "👤 አባል መመዝገቢያ",
+    "💰 የወር ቁጠባ ማስገቢያ",
+    "💵 የብድር አገልግሎት",
+    "📅 የብድር ክፍያ መመዝገቢያ",
+    "📊 ጠቅላላ ሪፖርት",
+    "✏️ የአባላት መረጃ ማስተካከያ",
+    "👥 ተጠቃሚዎች አስተዳደር",
+]
+
+allowed_pages = [
+    p for p in ALL_PAGES
+    if user_can_access(p)
+]
+
 page = st.sidebar.radio(
     "ገጽ ይምረጡ",
-    [
-        "🏠 ዋና ዳሽቦርድ",
-        "👤 አባል መመዝገቢያ",
-        "💰 የወር ቁጠባ ማስገቢያ",
-        "💵 የብድር አገልግሎት",
-        "📅 የብድር ክፍያ መመዝገቢያ",
-        "📊 ጠቅላላ ሪፖርት",
-        "✏️ የአባላት መረጃ ማስተካከያ"
-    ]
+    allowed_pages
 )
 
 st.sidebar.divider()
@@ -1170,12 +1422,19 @@ if page == "👤 አባል መመዝገቢያ":
                 normalize_member(new_member)
             )
 
+            log_action(
+                audit_log,
+                "REGISTER_MEMBER",
+                f"Member={new_number} Name={name.strip()}"
+            )
+
             save_data_to_excel(
                 members,
                 payment_history
             )
 
             st.session_state.members = members
+            st.session_state.audit_log = audit_log
 
             st.success(
                 f"{name} በአባል ቁጥር {new_number} ተመዝግቧል። "
@@ -1367,12 +1626,19 @@ elif page == "💰 የወር ቁጠባ ማስገቢያ":
                             )
                         })
 
+                        log_action(
+                            audit_log,
+                            "LOAN_PAYMENT",
+                            f"Member={selected_number} Amount={money(loan_paid)}"
+                        )
+
                         save_data_to_excel(
                             members,
                             payment_history
                         )
 
                         st.session_state.members = members
+                        st.session_state.audit_log = audit_log
                         st.session_state.payment_history = payment_history
 
                         st.success(
@@ -1413,12 +1679,19 @@ elif page == "💰 የወር ቁጠባ ማስገቢያ":
                             f"{month} ቁጠባ ተጨምሯል።"
                         )
 
+                    log_action(
+                        audit_log,
+                        "SAVINGS_PAYMENT",
+                        f"Member={selected_number} Month={month} Amount={money(amount)} Mode={mode}"
+                    )
+
                     save_data_to_excel(
                         members,
                         payment_history
                     )
 
                     st.session_state.members = members
+                    st.session_state.audit_log = audit_log
 
                     st.rerun()
 
@@ -1595,12 +1868,19 @@ elif page == "💵 የብድር አገልግሎት":
                         datetime.now().strftime("%Y-%m-%d")
                     )
 
+                    log_action(
+                        audit_log,
+                        "LOAN_APPROVAL",
+                        f"Member={selected_number} Amount={money(loan_amount)} Term={term}"
+                    )
+
                     save_data_to_excel(
                         members,
                         payment_history
                     )
 
                     st.session_state.members = members
+                    st.session_state.audit_log = audit_log
 
                     st.success(
                         f"{member['ስም']} {money(loan_amount)} ብር ብድር "
@@ -1772,6 +2052,12 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
                         )
                     })
 
+                    log_action(
+                        audit_log,
+                        "LOAN_REPAYMENT",
+                        f"Member={selected_number} Amount={money(result['payment'])} Receipt={receipt_number}"
+                    )
+
                     save_data_to_excel(
                         members,
                         payment_history
@@ -1779,6 +2065,7 @@ elif page == "📅 የብድር ክፍያ መመዝገቢያ":
 
                     st.session_state.members = members
                     st.session_state.payment_history = payment_history
+                    st.session_state.audit_log = audit_log
                     st.session_state.last_receipt = payment_history[-1].copy()
 
                     st.success(
@@ -2229,12 +2516,19 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                     new_registration_fee
                 )
 
+                log_action(
+                    audit_log,
+                    "EDIT_MEMBER",
+                    f"Member={selected_number} Name={new_name.strip()}"
+                )
+
                 save_data_to_excel(
                     members,
                     payment_history
                 )
 
                 st.session_state.members = members
+                st.session_state.audit_log = audit_log
 
                 st.success(
                     "የአባሉ መረጃ ተስተካክሏል።"
@@ -2298,7 +2592,14 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                     )
                     st.stop()
 
+                deleted_name = member.get("ስም", "")
                 members.pop(member_index)
+
+                log_action(
+                    audit_log,
+                    "DELETE_MEMBER",
+                    f"Member={selected_number} Name={deleted_name}"
+                )
 
                 save_data_to_excel(
                     members,
@@ -2306,12 +2607,267 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                 )
 
                 st.session_state.members = members
+                st.session_state.audit_log = audit_log
 
                 st.success(
                     "አባሉ ተሰርዟል።"
                 )
 
                 st.rerun()
+
+
+# ============================================================
+# 7. USER MANAGEMENT / CHANGE PASSWORD
+# ============================================================
+
+elif page == "👥 ተጠቃሚዎች አስተዳደር":
+
+    st.header("👥 ተጠቃሚዎች አስተዳደር")
+
+    if current_user.get("role") != "Admin":
+        st.error("❌ ይህን ገጽ ለመጠቀም Admin መሆን አለብዎት።")
+        st.stop()
+
+    st.subheader("➕ አዲስ ተጠቃሚ ፍጠር")
+
+    with st.form("create_user_form"):
+        new_username = st.text_input("Username")
+        new_password = st.text_input("Password", type="password")
+        new_role = st.selectbox("Role", ALL_ROLES[1:])
+        create_user_submit = st.form_submit_button(
+            "➕ ተጠቃሚ ፍጠር",
+            type="primary"
+        )
+
+    if create_user_submit:
+
+        if not new_username.strip():
+            st.error("Username ያስገቡ።")
+
+        elif len(new_password) < 6:
+            st.error("Password ቢያንስ 6 ቁምፊዎች ይኑረው።")
+
+        elif find_user(users, new_username):
+            st.error("ይህ Username አስቀድሞ አለ።")
+
+        else:
+            users.append({
+                "username": new_username.strip(),
+                "password_hash": hash_password(new_password),
+                "role": new_role,
+                "active": "Yes",
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
+
+            log_action(
+                audit_log,
+                "CREATE_USER",
+                f"Username={new_username.strip()} Role={new_role}"
+            )
+
+            save_data_to_excel(members, payment_history, users, audit_log)
+            st.session_state.users = users
+            st.session_state.audit_log = audit_log
+            st.success("ተጠቃሚው ተፈጥሯል።")
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("👥 ያሉ ተጠቃሚዎች")
+
+    users_display = pd.DataFrame([
+        {
+            "Username": u.get("username", ""),
+            "Role": u.get("role", ""),
+            "Active": u.get("active", ""),
+            "Created": u.get("created_at", ""),
+        }
+        for u in users
+    ])
+
+    st.dataframe(
+        users_display,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.divider()
+
+    st.subheader("⚙️ Role / Active ሁኔታ ማስተካከያ")
+
+    managed_username = st.selectbox(
+        "ተጠቃሚ ይምረጡ",
+        [str(u.get("username", "")) for u in users],
+        key="managed_user_select"
+    )
+
+    managed_user = find_user(users, managed_username)
+
+    if managed_user:
+        with st.form("manage_user_form"):
+            managed_role = st.selectbox(
+                "Role",
+                ALL_ROLES,
+                index=(
+                    ALL_ROLES.index(str(managed_user.get("role", "Reports")))
+                    if str(managed_user.get("role", "Reports")) in ALL_ROLES
+                    else ALL_ROLES.index("Reports")
+                )
+            )
+            managed_active = st.checkbox(
+                "ተጠቃሚው Active ነው",
+                value=str(managed_user.get("active", "Yes")).lower() in ("yes", "true", "1")
+            )
+            manage_user_submit = st.form_submit_button(
+                "💾 Role / Active አስቀምጥ"
+            )
+
+        if manage_user_submit:
+            # Do not allow the only Admin to be disabled or demoted.
+            admin_count = sum(
+                1 for u in users
+                if str(u.get("role", "")) == "Admin"
+                and str(u.get("active", "Yes")).lower() in ("yes", "true", "1")
+            )
+
+            if (
+                str(managed_user.get("role", "")) == "Admin"
+                and managed_role != "Admin"
+                and admin_count <= 1
+            ):
+                st.error("❌ ቢያንስ አንድ Active Admin መኖር አለበት።")
+            elif (
+                str(managed_user.get("role", "")) == "Admin"
+                and not managed_active
+                and admin_count <= 1
+            ):
+                st.error("❌ ቢያንስ አንድ Active Admin መኖር አለበት።")
+            else:
+                old_role = managed_user.get("role", "")
+                old_active = managed_user.get("active", "")
+                managed_user["role"] = managed_role
+                managed_user["active"] = "Yes" if managed_active else "No"
+
+                log_action(
+                    audit_log,
+                    "UPDATE_USER",
+                    f"Username={managed_username} Role={old_role}->{managed_role} Active={old_active}->{managed_user['active']}"
+                )
+
+                save_data_to_excel(members, payment_history, users, audit_log)
+                st.session_state.users = users
+                st.session_state.audit_log = audit_log
+                st.success("የተጠቃሚው Role / Active ሁኔታ ተስተካክሏል።")
+                st.rerun()
+
+    st.divider()
+
+    st.subheader("🗑️ ተጠቃሚ ሰርዝ")
+
+    delete_username = st.selectbox(
+        "ለመሰረዝ ተጠቃሚ",
+        [str(u.get("username", "")) for u in users],
+        key="delete_user_select"
+    )
+
+    delete_user = find_user(users, delete_username)
+
+    if delete_user:
+        confirm_user_delete = st.checkbox(
+            f"⚠️ `{delete_username}` ተጠቃሚን መሰረዝ እፈልጋለሁ",
+            key="confirm_user_delete"
+        )
+
+        if confirm_user_delete and st.button("🗑️ ተጠቃሚውን ሰርዝ"):
+            admin_count = sum(
+                1 for u in users
+                if str(u.get("role", "")) == "Admin"
+                and str(u.get("active", "Yes")).lower() in ("yes", "true", "1")
+            )
+
+            if (
+                str(delete_user.get("role", "")) == "Admin"
+                and str(delete_user.get("active", "Yes")).lower() in ("yes", "true", "1")
+                and admin_count <= 1
+            ):
+                st.error("❌ የመጨረሻውን Active Admin መሰረዝ አይቻልም።")
+            elif str(delete_username).strip().lower() == current_username().strip().lower():
+                st.error("❌ እርስዎ እየገቡበት ያለውን account እራስዎ መሰረዝ አይችሉም።")
+            else:
+                users[:] = [
+                    u for u in users
+                    if str(u.get("username", "")).strip().lower()
+                    != str(delete_username).strip().lower()
+                ]
+
+                log_action(
+                    audit_log,
+                    "DELETE_USER",
+                    f"Username={delete_username}"
+                )
+
+                save_data_to_excel(members, payment_history, users, audit_log)
+                st.session_state.users = users
+                st.session_state.audit_log = audit_log
+                st.success("ተጠቃሚው ተሰርዟል።")
+                st.rerun()
+
+    st.divider()
+
+    st.subheader("🔑 Password ቀይር")
+
+    with st.form("change_password_form"):
+        target_username = st.selectbox(
+            "ተጠቃሚ",
+            [str(u.get("username", "")) for u in users]
+        )
+        old_password = st.text_input("የአሁኑ Password", type="password")
+        replacement_password = st.text_input("አዲስ Password", type="password")
+        change_password_submit = st.form_submit_button(
+            "🔑 Password ቀይር"
+        )
+
+    if change_password_submit:
+
+        target_user = find_user(users, target_username)
+
+        if not target_user:
+            st.error("ተጠቃሚው አልተገኘም።")
+
+        elif len(replacement_password) < 6:
+            st.error("አዲሱ Password ቢያንስ 6 ቁምፊዎች ይኑረው።")
+
+        elif not verify_password(old_password, target_user.get("password_hash", "")):
+            st.error("የአሁኑ Password ትክክል አይደለም።")
+
+        else:
+            target_user["password_hash"] = hash_password(replacement_password)
+
+            log_action(
+                audit_log,
+                "CHANGE_PASSWORD",
+                f"Username={target_username}"
+            )
+
+            save_data_to_excel(members, payment_history, users, audit_log)
+            st.session_state.users = users
+            st.session_state.audit_log = audit_log
+            st.success("Password ተቀይሯል።")
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("📜 Audit Trail")
+
+    if audit_log:
+        audit_df = pd.DataFrame(audit_log)
+        st.dataframe(
+            audit_df.tail(200).iloc[::-1],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("እስካሁን Audit Trail የለም።")
 
 
 # ============================================================

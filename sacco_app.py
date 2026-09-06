@@ -257,9 +257,9 @@ def normalize_member(member):
         member.get("ብሔራዊ መታወቂያ", "")
     )
 
-    # Existing registered members do not have real National IDs yet.
+    # Existing registered members may have blank or old numeric temporary IDs.
     # Give them temporary sequential 12-digit IDs based on member number.
-    if not national_id:
+    if not valid_national_id(national_id):
         national_id = make_default_national_id(
             member["የአባል ቁጥር"]
         )
@@ -788,7 +788,7 @@ def national_id_exists(
     exclude_member_number=None
 ):
 
-    national_id = str(national_id).strip()
+    national_id = clean_national_id(national_id)
 
     if not national_id:
         return False

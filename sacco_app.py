@@ -216,6 +216,30 @@ def safe_int(value, default=0):
         return default
 
 
+def make_default_national_id(member_number):
+    """Generate a temporary 12-digit National ID for existing members."""
+    return f"{safe_int(member_number):012d}"
+
+
+def clean_national_id(national_id):
+    """Remove spaces so the National ID is stored as exactly 12 digits."""
+    return str(national_id or "").replace(" ", "").strip()
+
+
+def valid_national_id(national_id):
+    """National ID must contain exactly 12 digits."""
+    national_id = clean_national_id(national_id)
+    return len(national_id) == 12 and national_id.isdigit()
+
+
+def format_national_id(national_id):
+    """Display a 12-digit National ID as 0000 0000 0000."""
+    national_id = clean_national_id(national_id)
+    if len(national_id) == 12:
+        return f"{national_id[:4]} {national_id[4:8]} {national_id[8:]}"
+    return national_id
+
+
 def normalize_member(member):
     """Ensure old and new records have all required fields."""
 
@@ -227,9 +251,19 @@ def normalize_member(member):
     )
 
     member["ስም"] = str(member.get("ስም", "") or "")
-    member["ብሔራዊ መታወቂያ"] = str(
-        member.get("ብሔራዊ መታወቂያ", "") or ""
+
+    national_id = clean_national_id(
+        member.get("ብሔራዊ መታወቂያ", "")
     )
+
+    # Existing registered members do not have real National IDs yet.
+    # Give them temporary sequential 12-digit IDs based on member number.
+    if not national_id:
+        national_id = make_default_national_id(
+            member["የአባል ቁጥር"]
+        )
+
+    member["ብሔራዊ መታወቂያ"] = national_id
 
     member["ፎቶ"] = str(member.get("ፎቶ", "") or "")
 
@@ -312,7 +346,9 @@ def create_initial_members():
         member = {
             "የአባል ቁጥር": int(row["የአባል ቁጥር"]),
             "ስም": str(row["ስም"]),
-            "ብሔራዊ መታወቂያ": "",
+            "ብሔራዊ መታወቂያ": make_default_national_id(
+                int(row["የአባል ቁጥር"])
+            ),
             "ፎቶ": "",
 
             # The original three values supplied by the user
@@ -596,6 +632,28 @@ def load_database():
                 payment_history
             )
 
+        else:
+            # Persist temporary National IDs for existing members
+            # that were previously registered without an ID.
+            ids_changed = False
+
+            for member in members:
+                expected_id = make_default_national_id(
+                    member.get("የአባል ቁጥር", 0)
+                )
+
+                if not clean_national_id(
+                    member.get("ብሔራዊ መታወቂያ", "")
+                ):
+                    member["ብሔራዊ መታወቂያ"] = expected_id
+                    ids_changed = True
+
+            if ids_changed:
+                save_data_to_excel(
+                    members,
+                    payment_history
+                )
+
         return members, payment_history
 
     except Exception as e:
@@ -752,7 +810,9 @@ if page == "👤 አባል መመዝገቢያ":
         )
 
         national_id = st.text_input(
-            "ብሔራዊ መታወቂያ"
+            "ብሔራዊ መታወቂያ *",
+            placeholder="0000 0000 0000",
+            help="12 ዲጂት መሆን አለበት። ለምሳሌ፦ 0000 0000 0001"
         )
 
     with col2:
@@ -777,9 +837,16 @@ if page == "👤 አባል መመዝገቢያ":
 
             st.error("የአባል ስም ያስገቡ።")
 
+        elif not valid_national_id(national_id):
+
+            st.error(
+                "ብሔራዊ መታወቂያ 12 ዲጂት መሆን አለበት። "
+                "ለምሳሌ፦ 0000 0000 0001"
+            )
+
         elif national_id_exists(
             members,
-            national_id
+            clean_national_id(national_id)
         ):
 
             st.error(
@@ -802,7 +869,7 @@ if page == "👤 አባል መመዝገቢያ":
             new_member = {
                 "የአባል ቁጥር": new_number,
                 "ስም": name.strip(),
-                "ብሔራዊ መታወቂያ": national_id.strip(),
+                "ብሔራዊ መታወቂያ": clean_national_id(national_id),
                 "ፎቶ": photo.strip(),
                 "የመመዝገቢያ ክፍያ (ብር)": registration_fee,
 
@@ -1785,13 +1852,15 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
             )
 
             new_national_id = st.text_input(
-                "ብሔራዊ መታወቂያ",
-                value=str(
+                "ብሔራዊ መታወቂያ *",
+                value=format_national_id(
                     member.get(
                         "ብሔራዊ መታወቂያ",
                         ""
                     )
-                )
+                ),
+                placeholder="0000 0000 0000",
+                help="12 ዲጂት መሆን አለበት። ለምሳሌ፦ 0000 0000 0001"
             )
 
         with col2:
@@ -1829,9 +1898,16 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                     "ስም ባዶ መሆን አይችልም።"
                 )
 
+            elif not valid_national_id(new_national_id):
+
+                st.error(
+                    "ብሔራዊ መታወቂያ 12 ዲጂት መሆን አለበት። "
+                    "ለምሳሌ፦ 0000 0000 0001"
+                )
+
             elif national_id_exists(
                 members,
-                new_national_id,
+                clean_national_id(new_national_id),
                 exclude_member_number=selected_number
             ):
 
@@ -1844,7 +1920,7 @@ elif page == "✏️ የአባላት መረጃ ማስተካከያ":
                 member["ስም"] = new_name.strip()
 
                 member["ብሔራዊ መታወቂያ"] = (
-                    new_national_id.strip()
+                    clean_national_id(new_national_id)
                 )
 
                 member["ፎቶ"] = new_photo.strip()
